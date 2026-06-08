@@ -245,7 +245,7 @@ function CheckStockTab({ products, outletId, initialStocks, onSave }: CheckStock
       const res = await fetch(`/api/visit/${outletId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stockChecks, posmChecks: [] })
+        body: JSON.stringify({ stockChecks })
       });
 
       if (res.ok) {
@@ -350,7 +350,7 @@ function CheckPosmTab({ posms, outletId, initialPosms, onSave }: CheckPosmTabPro
       const res = await fetch(`/api/visit/${outletId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stockChecks: [], posmChecks })
+        body: JSON.stringify({ posmChecks })
       });
 
       if (res.ok) {

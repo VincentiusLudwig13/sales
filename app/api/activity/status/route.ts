@@ -17,6 +17,9 @@ export async function GET(req: Request) {
       userId: session.user.id,
       date: { gte: today },
     },
+    include: {
+      items: true
+    }
   });
 
   // Check POSM loading
@@ -25,6 +28,9 @@ export async function GET(req: Request) {
       userId: session.user.id,
       date: { gte: today },
     },
+    include: {
+      items: true
+    }
   });
 
   // Check daily route closure status
@@ -47,6 +53,8 @@ export async function GET(req: Request) {
     isClosed,
     productLoadingStatus: productLoading?.status || "DRAFT",
     posmLoadingStatus: posmLoading?.status || "DRAFT",
+    productItems: productLoading?.items || [],
+    posmItems: posmLoading?.items || [],
     user: { id: session.user.id, name: session.user.name }
   });
 }

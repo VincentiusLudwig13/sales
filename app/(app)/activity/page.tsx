@@ -11,6 +11,8 @@ export default function ActivityPage() {
   const [isValidated, setIsValidated] = useState(false);
   const [isClosed, setIsClosed] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState({ product: "DRAFT", posm: "DRAFT" });
+  const [loadedProductItems, setLoadedProductItems] = useState<any[]>([]);
+  const [loadedPosmItems, setLoadedPosmItems] = useState<any[]>([]);
   const [statusLoading, setStatusLoading] = useState(true);
 
   const fetchStatus = () => {
@@ -29,6 +31,8 @@ export default function ActivityPage() {
           product: data.productLoadingStatus ?? "DRAFT",
           posm: data.posmLoadingStatus ?? "DRAFT",
         });
+        setLoadedProductItems(data.productItems ?? []);
+        setLoadedPosmItems(data.posmItems ?? []);
         setStatusLoading(false);
       })
       .catch(() => setStatusLoading(false));
@@ -102,8 +106,8 @@ export default function ActivityPage() {
       )}
 
       <div className="flex-1 p-4">
-        {activeTab === "product" && <ProductLoadingTab status={loadingStatus.product} onSubmitted={fetchStatus} />}
-        {activeTab === "posm" && <PosmLoadingTab status={loadingStatus.posm} onSubmitted={fetchStatus} />}
+        {activeTab === "product" && <ProductLoadingTab status={loadingStatus.product} loadedItems={loadedProductItems} onSubmitted={fetchStatus} />}
+        {activeTab === "posm" && <PosmLoadingTab status={loadingStatus.posm} loadedItems={loadedPosmItems} onSubmitted={fetchStatus} />}
         {activeTab === "activity" && <DailyActivityTab />}
       </div>
     </div>
@@ -120,7 +124,13 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 // --- PRODUCT LOADING TAB ---
-function ProductLoadingTab({ status, onSubmitted }: { status: string; onSubmitted: () => void }) {
+interface ProductLoadingTabProps {
+  status: string;
+  loadedItems: any[];
+  onSubmitted: () => void;
+}
+
+function ProductLoadingTab({ status, loadedItems, onSubmitted }: ProductLoadingTabProps) {
   const [products, setProducts] = useState<{ id: string; name: string; price: number; qty: number }[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -129,11 +139,14 @@ function ProductLoadingTab({ status, onSubmitted }: { status: string; onSubmitte
     fetch("/api/products")
       .then((r) => r.json())
       .then((data) => {
-        setProducts(data.map((p: any) => ({ ...p, qty: 0 })));
+        setProducts(data.map((p: any) => {
+          const matched = loadedItems.find((li) => li.productId === p.id);
+          return { ...p, qty: matched ? matched.qty : 0 };
+        }));
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, []);
+  }, [loadedItems]);
 
   const updateQty = (id: string, qty: number) => {
     setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, qty: Math.max(0, qty) } : p)));
@@ -221,7 +234,13 @@ function ProductLoadingTab({ status, onSubmitted }: { status: string; onSubmitte
 }
 
 // --- POSM LOADING TAB ---
-function PosmLoadingTab({ status, onSubmitted }: { status: string; onSubmitted: () => void }) {
+interface PosmLoadingTabProps {
+  status: string;
+  loadedItems: any[];
+  onSubmitted: () => void;
+}
+
+function PosmLoadingTab({ status, loadedItems, onSubmitted }: PosmLoadingTabProps) {
   const [posms, setPosms] = useState<{ id: string; name: string; qty: number }[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -230,11 +249,14 @@ function PosmLoadingTab({ status, onSubmitted }: { status: string; onSubmitted: 
     fetch("/api/posms")
       .then((r) => r.json())
       .then((data) => {
-        setPosms(data.map((p: any) => ({ ...p, qty: 0 })));
+        setPosms(data.map((p: any) => {
+          const matched = loadedItems.find((li) => li.posmId === p.id);
+          return { ...p, qty: matched ? matched.qty : 0 };
+        }));
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, []);
+  }, [loadedItems]);
 
   const updateQty = (id: string, qty: number) => {
     setPosms((prev) => prev.map((p) => (p.id === id ? { ...p, qty: Math.max(0, qty) } : p)));
@@ -773,10 +795,10 @@ function DailyActivityTab() {
 
                   {/* Inline Tooltip drawer with map and exterior photo */}
                   {activeTooltipId === outlet.id && (
-                    <div className="border-t border-slate-100 bg-slate-50/50 p-4 space-y-3.5 animate-in slide-in-from-top duration-200">
-                      <div className="grid grid-cols-2 gap-3">
+                    <div className="border-t border-slate-100 bg-slate-50/50 p-4 space-y-4 animate-in slide-in-from-top duration-200">
+                      <div className="flex flex-col space-y-3">
                         {/* Static OpenStreetMap Open source Iframe map */}
-                        <div className="rounded-xl overflow-hidden border border-slate-200 h-28 relative bg-slate-100">
+                        <div className="rounded-xl overflow-hidden border border-slate-200 h-48 relative bg-slate-100 w-full shadow-sm">
                           {outlet.latitude && outlet.longitude ? (
                             <iframe
                               className="w-full h-full border-none"
@@ -789,7 +811,7 @@ function DailyActivityTab() {
                         </div>
 
                         {/* Store front exterior photo */}
-                        <div className="rounded-xl overflow-hidden border border-slate-200 h-28 relative bg-slate-100">
+                        <div className="rounded-xl overflow-hidden border border-slate-200 h-36 relative bg-slate-100 w-full shadow-sm">
                           {outlet.photoUrl ? (
                             <img src={outlet.photoUrl} alt="Store front" className="w-full h-full object-cover" />
                           ) : (

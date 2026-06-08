@@ -54,30 +54,64 @@ export async function POST(
     // stockChecks: [{ productId, qty, expiryDate? }]
     // posmChecks: [{ posmId, qty }]
 
-    // Delete any existing visit today to overwrite/update the check status
+    // Query existing visit today to merge fields
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    await prisma.outletVisit.deleteMany({
+    const existingVisit = await prisma.outletVisit.findFirst({
       where: {
         userId: session.user.id,
         outletId,
         date: { gte: today }
+      },
+      include: {
+        stockChecks: true,
+        posmChecks: true
       }
     });
+
+    // Merge stockChecks and posmChecks
+    let mergedStockChecks = stockChecks;
+    let mergedPosmChecks = posmChecks;
+
+    if (existingVisit) {
+      if (!stockChecks) {
+        // If saving POSM, preserve existing stock checks
+        mergedStockChecks = existingVisit.stockChecks.map(sc => ({
+          productId: sc.productId,
+          qty: sc.qty,
+          expiryDate: sc.expiryDate ? sc.expiryDate.toISOString() : undefined
+        }));
+      }
+      if (!posmChecks) {
+        // If saving Stock, preserve existing POSM checks
+        mergedPosmChecks = existingVisit.posmChecks.map(pc => ({
+          posmId: pc.posmId,
+          qty: pc.qty
+        }));
+      }
+
+      await prisma.outletVisit.deleteMany({
+        where: {
+          userId: session.user.id,
+          outletId,
+          date: { gte: today }
+        }
+      });
+    }
 
     const visit = await prisma.outletVisit.create({
       data: {
         userId: session.user.id,
         outletId,
         stockChecks: {
-          create: (stockChecks ?? []).map((sc: { productId: string; qty: number; expiryDate?: string }) => ({
+          create: (mergedStockChecks ?? []).map((sc: { productId: string; qty: number; expiryDate?: string }) => ({
             productId: sc.productId,
             qty: sc.qty,
             expiryDate: sc.expiryDate ? new Date(sc.expiryDate) : null,
           })),
         },
         posmChecks: {
-          create: (posmChecks ?? []).map((pc: { posmId: string; qty: number }) => ({
+          create: (mergedPosmChecks ?? []).map((pc: { posmId: string; qty: number }) => ({
             posmId: pc.posmId,
             qty: pc.qty,
           })),
