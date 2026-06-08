@@ -422,9 +422,7 @@ interface SelectedItem {
 
 function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
   const router = useRouter();
-  const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([
-    { productId: products[0]?.id || "", qty: 1, discount: 0 }
-  ]);
+  const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
   const [topTerm, setTopTerm] = useState(outlet.topTerm || "COD");
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [settlingBill, setSettlingBill] = useState<string | null>(null);
@@ -448,9 +446,9 @@ function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
     setSelectedItems((prev) => {
       const copy = [...prev];
       if (key === "qty") {
-        copy[index] = { ...copy[index], qty: Math.max(1, Number(val)) };
+        copy[index] = { ...copy[index], qty: val === "" ? 0 : Math.max(0, Number(val)) };
       } else if (key === "discount") {
-        copy[index] = { ...copy[index], discount: Math.max(0, Number(val)) };
+        copy[index] = { ...copy[index], discount: val === "" ? 0 : Math.max(0, Number(val)) };
       } else if (key === "productId") {
         copy[index] = { ...copy[index], productId: String(val) };
       }
@@ -529,10 +527,61 @@ function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
     fileInput.click();
   };
 
+  // Return states
+  const [returnItems, setReturnItems] = useState<{ productId: string; qty: number; value: number }[]>([]);
+  const [collectionInput, setCollectionInput] = useState<string>("0");
+
+  const handleAddReturnItem = () => {
+    setReturnItems((prev) => [
+      ...prev,
+      { productId: products[0]?.id || "", qty: 1, value: products[0]?.price || 0 }
+    ]);
+  };
+
+  const handleRemoveReturnItem = (index: number) => {
+    setReturnItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleReturnItemChange = (index: number, key: "productId" | "qty", val: string | number) => {
+    setReturnItems((prev) => {
+      const copy = [...prev];
+      if (key === "productId") {
+        const product = products.find((p) => p.id === val);
+        copy[index] = {
+          ...copy[index],
+          productId: String(val),
+          value: (product?.price || 0) * copy[index].qty
+        };
+      } else if (key === "qty") {
+        const product = products.find((p) => p.id === copy[index].productId);
+        const inputQty = val === "" ? 0 : Math.max(0, Number(val));
+        copy[index] = {
+          ...copy[index],
+          qty: inputQty,
+          value: (product?.price || 0) * inputQty
+        };
+      }
+      return copy;
+    });
+  };
+
+  const totalReturnDeduction = returnItems.reduce((sum, item) => sum + item.value, 0);
+  const totalCollection = Math.max(0, parseFloat(collectionInput) || 0);
+
   // Submit Order
   const handleSubmitOrder = async () => {
-    if (calculatedItems.length === 0) {
-      return alert("Please add at least one product to the order.");
+    const hasOrderItems = calculatedItems.length > 0;
+    const hasReturnItems = returnItems.length > 0;
+    const hasCollection = totalCollection > 0;
+
+    if (!hasOrderItems && !hasReturnItems && !hasCollection) {
+      return alert("Please enter an order, add returns, or enter a collection amount before submitting.");
+    }
+    if (hasOrderItems && calculatedItems.some((ci) => ci.qty <= 0)) {
+      return alert("Product quantities must be at least 1.");
+    }
+    if (hasReturnItems && returnItems.some((ri) => ri.qty <= 0)) {
+      return alert("Return product quantities must be at least 1.");
     }
     if (!photoUrl) {
       return alert("Photo attachment of the Nota & Products is required.");
@@ -553,12 +602,19 @@ function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
         nettSales: totalNett,
         topTerm,
         photoUrl,
+        collectionAmount: totalCollection,
+        returnDeduction: totalReturnDeduction,
         items: calculatedItems.map((ci) => ({
           productId: ci.productId,
           qty: ci.qty,
           grossSales: ci.grossSales,
           discount: ci.discount,
           nettSales: ci.nettSales
+        })),
+        returns: returnItems.map((ri) => ({
+          productId: ri.productId,
+          qty: ri.qty,
+          value: ri.value
         }))
       };
 
@@ -731,39 +787,132 @@ function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
             + Add Another Product
           </Button>
 
-          {/* Payment terms & details */}
-          <div className="pt-2 border-t border-slate-100 space-y-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 mb-1 block">Payment Term</label>
-              <select 
-                value={topTerm}
-                onChange={(e) => setTopTerm(e.target.value)}
-                className="w-full h-10 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="COD">COD</option>
-                <option value="3 Days">3 Days</option>
-                <option value="4 Days">4 Days</option>
-                <option value="7 Days">7 Days</option>
-              </select>
-            </div>
+           {/* Return (Retur) Form Section */}
+           <div className="pt-4 border-t border-slate-100 space-y-3">
+             <div className="flex justify-between items-center px-1">
+               <h4 className="text-sm font-bold text-slate-800">Return Items (Retur)</h4>
+               <Button 
+                 type="button" 
+                 variant="ghost" 
+                 size="sm" 
+                 onClick={handleAddReturnItem}
+                 className="text-xs text-blue-600 hover:bg-blue-50 hover:text-blue-700 h-8 px-2.5 rounded-lg font-semibold"
+               >
+                 + Add Return
+               </Button>
+             </div>
 
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-2 text-sm">
-              <div className="flex justify-between items-center text-slate-500">
-                <span>Total Gross Sales:</span>
-                <span>Rp {totalGross.toLocaleString("id-ID")}</span>
-              </div>
-              <div className="flex justify-between items-center text-slate-500">
-                <span>Total Discount:</span>
-                <span>Rp {totalDiscount.toLocaleString("id-ID")}</span>
-              </div>
-              <div className="flex justify-between items-center font-bold text-slate-900 border-t border-slate-200/60 pt-2 text-base">
-                <span>Total Nett Sales:</span>
-                <span>Rp {totalNett.toLocaleString("id-ID")}</span>
-              </div>
-            </div>
-          </div>
-        </Card>
-      </div>
+             {returnItems.length === 0 ? (
+               <p className="text-xs text-slate-400 italic px-1">No returns added to this order.</p>
+             ) : (
+               <div className="space-y-3">
+                 {returnItems.map((item, idx) => (
+                   <div key={idx} className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-2 relative">
+                     <button 
+                       type="button" 
+                       onClick={() => handleRemoveReturnItem(idx)}
+                       className="absolute top-2 right-2 text-slate-400 hover:text-rose-500 text-xs font-semibold"
+                     >
+                       Remove
+                     </button>
+                     <div className="grid grid-cols-2 gap-2">
+                       <div>
+                         <label className="text-[10px] font-bold text-slate-400 mb-1 block">Product</label>
+                         <select 
+                           value={item.productId}
+                           onChange={(e) => handleReturnItemChange(idx, "productId", e.target.value)}
+                           className="w-full h-8 rounded-md border border-slate-200 bg-white px-2 text-xs focus:outline-none"
+                         >
+                           {products.map((p) => (
+                             <option key={p.id} value={p.id}>{p.name}</option>
+                           ))}
+                         </select>
+                       </div>
+                       <div>
+                         <label className="text-[10px] font-bold text-slate-400 mb-1 block">Qty</label>
+                         <Input 
+                           type="number" 
+                           value={item.qty} 
+                           onChange={(e) => handleReturnItemChange(idx, "qty", parseInt(e.target.value) || 1)}
+                           className="h-8 bg-white border-slate-200 text-xs" 
+                         />
+                       </div>
+                     </div>
+                     <div className="text-[11px] text-slate-500 text-right font-medium">
+                       Deduction: <span className="font-bold text-slate-800">Rp {item.value.toLocaleString("id-ID")}</span>
+                     </div>
+                   </div>
+                 ))}
+               </div>
+             )}
+           </div>
+
+           {/* Payment collection inputs */}
+           <div className="pt-4 border-t border-slate-100 space-y-3">
+             <div>
+               <label className="text-xs font-bold text-slate-800 mb-1 block">Collection Amount (Rp)</label>
+               <Input 
+                 type="number" 
+                 placeholder="0" 
+                 value={collectionInput === "0" ? "" : collectionInput} 
+                 onChange={(e) => setCollectionInput(e.target.value)}
+                 className="h-10 bg-slate-50 border-slate-200 font-semibold text-blue-600 focus:ring-blue-500" 
+               />
+               <span className="text-[10px] text-slate-400 italic block mt-1">Deduct outstanding bills with collection amount.</span>
+             </div>
+           </div>
+
+           {/* Payment terms & details */}
+           <div className="pt-4 border-t border-slate-100 space-y-3">
+             <div>
+               <label className="text-xs font-medium text-slate-500 mb-1 block">Payment Term</label>
+               <select 
+                 value={topTerm}
+                 onChange={(e) => setTopTerm(e.target.value)}
+                 className="w-full h-10 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+               >
+                 <option value="COD">COD</option>
+                 <option value="3 Days">3 Days</option>
+                 <option value="4 Days">4 Days</option>
+                 <option value="7 Days">7 Days</option>
+               </select>
+             </div>
+
+             <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-2.5 text-sm">
+               <div className="flex justify-between items-center text-slate-500">
+                 <span>Total Gross Sales:</span>
+                 <span>Rp {totalGross.toLocaleString("id-ID")}</span>
+               </div>
+               <div className="flex justify-between items-center text-slate-500">
+                 <span>Total Discount:</span>
+                 <span>Rp {totalDiscount.toLocaleString("id-ID")}</span>
+               </div>
+               <div className="flex justify-between items-center font-bold text-slate-900 border-t border-slate-200/60 pt-2 text-base">
+                 <span>Total Nett Sales:</span>
+                 <span>Rp {totalNett.toLocaleString("id-ID")}</span>
+               </div>
+               {totalReturnDeduction > 0 && (
+                 <div className="flex justify-between items-center font-semibold text-rose-600 text-xs">
+                   <span>Retur Deduction:</span>
+                   <span>- Rp {totalReturnDeduction.toLocaleString("id-ID")}</span>
+                 </div>
+               )}
+               {totalCollection > 0 && (
+                 <div className="flex justify-between items-center font-semibold text-blue-600 text-xs">
+                   <span>Collection Deduction:</span>
+                   <span>- Rp {totalCollection.toLocaleString("id-ID")}</span>
+                 </div>
+               )}
+               {(totalReturnDeduction > 0 || totalCollection > 0) && (
+                 <div className="flex justify-between items-center font-bold text-emerald-600 border-t border-dashed border-slate-200 pt-2 text-sm">
+                   <span>New Outstanding Balance:</span>
+                   <span>Rp {Math.max(0, outstandingTotal + totalNett - totalReturnDeduction - totalCollection).toLocaleString("id-ID")}</span>
+                 </div>
+               )}
+             </div>
+           </div>
+         </Card>
+       </div>
 
       {/* Camera Attachment */}
       <div>

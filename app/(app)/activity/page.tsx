@@ -6,6 +6,8 @@ import { Package, ShoppingBasket, Map, ChevronRight, CheckCircle2, Lock, Store, 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+import { signOut } from "next-auth/react";
+
 export default function ActivityPage() {
   const [activeTab, setActiveTab] = useState<"product" | "posm" | "activity">("product");
   const [isValidated, setIsValidated] = useState(false);
@@ -51,7 +53,17 @@ export default function ActivityPage() {
   return (
     <div className="flex flex-col min-h-full animate-in fade-in duration-500">
       <div className="bg-white px-4 pt-6 pb-2 rounded-b-3xl shadow-sm border-b border-slate-200 sticky top-0 z-10">
-        <h2 className="text-2xl font-bold text-slate-900 mb-4">Daily Activity</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-2xl font-bold text-slate-900">Daily Activity</h2>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => signOut({ callbackUrl: "/login" })}
+            className="text-xs border-rose-200 text-rose-600 hover:bg-rose-50 h-8"
+          >
+            Logout
+          </Button>
+        </div>
 
         {/* Tab Navigation */}
         <div className="flex p-1 space-x-1 bg-slate-100 rounded-2xl relative">
