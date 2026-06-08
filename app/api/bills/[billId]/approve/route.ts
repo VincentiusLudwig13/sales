@@ -3,10 +3,10 @@ import { prisma } from "@/lib/prisma";
 
 export async function PATCH(
   req: Request,
-  { params }: { params: { billId: string } }
+  { params }: { params: Promise<{ billId: string }> }
 ) {
   try {
-    const { billId } = params;
+    const { billId } = await params;
     
     // Find pending settlements for this bill
     const settlements = await prisma.paymentSettlement.findMany({

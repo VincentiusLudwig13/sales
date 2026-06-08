@@ -9,10 +9,10 @@ const settleSchema = z.object({
 
 export async function POST(
   req: Request,
-  { params }: { params: { billId: string } }
+  { params }: { params: Promise<{ billId: string }> }
 ) {
   try {
-    const { billId } = params;
+    const { billId } = await params;
     const body = await req.json();
     const validatedData = settleSchema.parse(body);
 
@@ -39,7 +39,7 @@ export async function POST(
     return NextResponse.json(settlement, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ errors: error.errors }, { status: 400 });
+      return NextResponse.json({ errors: error.issues }, { status: 400 });
     }
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
