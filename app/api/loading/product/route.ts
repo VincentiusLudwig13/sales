@@ -25,10 +25,11 @@ export async function POST(req: Request) {
     // Update existing
     await prisma.loadingItem.deleteMany({ where: { reportId: report.id } });
   } else {
-    // Create new
+    // Create new with date locked to start of today to satisfy the @@unique constraint
     report = await prisma.loadingReport.create({
       data: {
         userId: session.user.id,
+        date: today,
       }
     });
   }

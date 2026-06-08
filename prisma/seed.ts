@@ -3,85 +3,70 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log("🌱 Seeding Neon database...");
+  console.log("🌱 Resetting and Seeding Neon database...");
 
-  // Clear loading reports for fresh testing
+  // 1. Delete all transactional / daily dynamic data
+  await prisma.paymentSettlement.deleteMany();
+  await prisma.bill.deleteMany();
+  await prisma.orderItem.deleteMany();
+  await prisma.order.deleteMany();
+  await prisma.posmCheck.deleteMany();
+  await prisma.stockCheck.deleteMany();
+  await prisma.outletVisit.deleteMany();
+  await prisma.routeClosure.deleteMany();
   await prisma.posmLoadingItem.deleteMany();
-  await prisma.loadingItem.deleteMany();
   await prisma.posmLoadingReport.deleteMany();
+  await prisma.loadingItem.deleteMany();
   await prisma.loadingReport.deleteMany();
 
-  // Upsert Admin
-  const admin = await prisma.user.upsert({
-    where: { username: "admin" },
-    update: {},
-    create: { username: "admin", password: "admin123", name: "Admin", role: "ADMIN" },
+  // 2. Delete and recreate static base entities
+  await prisma.outlet.deleteMany();
+  await prisma.posm.deleteMany();
+  await prisma.product.deleteMany();
+  await prisma.user.deleteMany();
+
+  // Seed Users
+  const admin = await prisma.user.create({
+    data: { username: "admin", password: "admin123", name: "Admin", role: "ADMIN" },
   });
   console.log("✅ Admin:", admin.username);
 
-  // Upsert Salesman
-  const salesman = await prisma.user.upsert({
-    where: { username: "salesman" },
-    update: {},
-    create: { username: "salesman", password: "sales123", name: "Budi Salesman", role: "SALESMAN" },
+  const salesman = await prisma.user.create({
+    data: { username: "salesman", password: "sales123", name: "Budi Salesman", role: "SALESMAN" },
   });
   console.log("✅ Salesman:", salesman.username);
 
-  // Let's keep it simple: just don't delete products if they already exist, only insert if empty.
-  const prodCount = await prisma.product.count();
-  if (prodCount === 0) {
-    await prisma.product.createMany({
-      data: [
-        { name: "Product A", price: 15000 },
-        { name: "Product B", price: 25000 },
-        { name: "Product C", price: 10000 },
-      ],
-    });
-  }
-  console.log("✅ Products seeded/verified");
+  // Seed Products
+  await prisma.product.createMany({
+    data: [
+      { name: "Product A", price: 15000 },
+      { name: "Product B", price: 25000 },
+      { name: "Product C", price: 10000 },
+    ],
+  });
+  console.log("✅ Products seeded");
 
-  // POSM
-  const posmCount = await prisma.posm.count();
-  if (posmCount === 0) {
-    await prisma.posm.createMany({
-      data: [
-        { name: "Banner A" },
-        { name: "Sticker B" },
-        { name: "Display Stand C" },
-      ],
-    });
-  }
-  console.log("✅ POSM seeded/verified");
+  // Seed POSM Items
+  await prisma.posm.createMany({
+    data: [
+      { name: "Banner A" },
+      { name: "Sticker B" },
+      { name: "Display Stand C" },
+    ],
+  });
+  console.log("✅ POSM seeded");
 
-  // Outlets — only create if empty, otherwise update them
-  const outletCount = await prisma.outlet.count();
-  if (outletCount === 0) {
-    await prisma.outlet.createMany({
-      data: [
-        { name: "Warung Pak Bejo", picName: "Pak Bejo", picPhone: "08123456789", topTerm: "COD", routeSeq: 1, routeGroup: "Route A", latitude: -6.2088, longitude: 106.8456 },
-        { name: "Toko Maju Jaya", picName: "Bu Sari", picPhone: "08234567890", topTerm: "3 Days", routeSeq: 2, routeGroup: "Route B", latitude: -6.2100, longitude: 106.8465 },
-        { name: "Minimarket Sejahtera", picName: "Pak Heri", picPhone: "08345678901", topTerm: "7 Days", routeSeq: 3, routeGroup: "Route C", latitude: -6.2115, longitude: 106.8475 },
-      ],
-    });
-  } else {
-    // Make sure we apply the routeSeq, routeGroup, lat, and long to the existing ones
-    const list = await prisma.outlet.findMany({ orderBy: { createdAt: "asc" } });
-    const sequenceMap = [
-      { routeSeq: 1, routeGroup: "Route A", latitude: -6.2088, longitude: 106.8456 },
-      { routeSeq: 2, routeGroup: "Route B", latitude: -6.2100, longitude: 106.8465 },
-      { routeSeq: 3, routeGroup: "Route C", latitude: -6.2115, longitude: 106.8475 }
-    ];
-    for (let i = 0; i < list.length; i++) {
-      const seq = sequenceMap[i] || { routeSeq: i + 1, routeGroup: "Route A", latitude: -6.2088, longitude: 106.8456 };
-      await prisma.outlet.update({
-        where: { id: list[i].id },
-        data: seq
-      });
-    }
-  }
+  // Seed Outlets
+  await prisma.outlet.createMany({
+    data: [
+      { name: "Warung Pak Bejo", picName: "Pak Bejo", picPhone: "08123456789", topTerm: "COD", routeSeq: 1, routeGroup: "Route A", latitude: -6.2088, longitude: 106.8456 },
+      { name: "Toko Maju Jaya", picName: "Bu Sari", picPhone: "08234567890", topTerm: "3 Days", routeSeq: 2, routeGroup: "Route B", latitude: -6.2100, longitude: 106.8465 },
+      { name: "Minimarket Sejahtera", picName: "Pak Heri", picPhone: "08345678901", topTerm: "7 Days", routeSeq: 3, routeGroup: "Route C", latitude: -6.2115, longitude: 106.8475 },
+    ],
+  });
   console.log("✅ Outlets seeded");
 
-  console.log("\n🎉 Seed complete!");
+  console.log("\n🎉 Database fully reset and seeded!");
   console.log("  Admin    → username: admin    | password: admin123");
   console.log("  Salesman → username: salesman | password: sales123");
 }

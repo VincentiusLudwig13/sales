@@ -27,6 +27,7 @@ export async function POST(req: Request) {
     report = await prisma.posmLoadingReport.create({
       data: {
         userId: session.user.id,
+        date: today,
       }
     });
   }
