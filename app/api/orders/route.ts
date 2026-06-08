@@ -146,6 +146,8 @@ export async function POST(req: Request) {
       }
 
       return { order: newOrder, bill: newBill };
+    }, {
+      timeout: 30000 // 30 seconds timeout limit
     });
 
     return NextResponse.json(result, { status: 201 });
