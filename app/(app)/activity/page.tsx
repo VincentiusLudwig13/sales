@@ -13,8 +13,8 @@ export default function ActivityPage() {
   const [isValidated, setIsValidated] = useState(false);
 
   const tabs = [
-    { id: "product", label: "Product", icon: Package },
-    { id: "posm", label: "POSM", icon: ShoppingBasket },
+    { id: "product", label: "Product", icon: Package, locked: false },
+    { id: "posm", label: "POSM", icon: ShoppingBasket, locked: false },
     { id: "activity", label: "Activity", icon: Map, locked: !isValidated },
   ] as const;
 
