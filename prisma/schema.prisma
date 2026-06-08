@@ -25,6 +25,7 @@ model User {
   visits           OutletVisit[]
   orders           Order[]
   settlements      PaymentSettlement[]
+  routeClosures    RouteClosure[]
 }
 
 // Product catalog
@@ -64,6 +65,7 @@ model Outlet {
   photoUrl  String?
   topTerm   String   @default("COD") // e.g., "COD", "3 Days"
   isActive  Boolean  @default(true)
+  routeSeq  Int      @default(0)     // sequence order of store route
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -71,6 +73,21 @@ model Outlet {
   visits    OutletVisit[]
   orders    Order[]
   bills     Bill[]
+}
+
+// ---------------------------------------------------------
+// ROUTE CLOSURE STATUS
+// ---------------------------------------------------------
+model RouteClosure {
+  id        String   @id @default(cuid())
+  date      DateTime @default(now())
+  isClosed  Boolean  @default(false)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, date])
 }
 
 // ---------------------------------------------------------

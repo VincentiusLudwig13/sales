@@ -1,16 +1,22 @@
 import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
 const settleSchema = z.object({
   amount: z.number().min(1, "Amount must be greater than 0"),
-  userId: z.string()
+  userId: z.string().optional()
 });
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ billId: string }> }
 ) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const { billId } = await params;
     const body = await req.json();
@@ -31,7 +37,7 @@ export async function POST(
       data: {
         amount: validatedData.amount,
         status: "PENDING",
-        userId: validatedData.userId,
+        userId: session.user.id,
         billId: bill.id
       }
     });
@@ -41,6 +47,7 @@ export async function POST(
     if (error instanceof z.ZodError) {
       return NextResponse.json({ errors: error.issues }, { status: 400 });
     }
+    console.error("[Settle] POST error:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

@@ -27,37 +27,58 @@ async function main() {
   });
   console.log("✅ Salesman:", salesman.username);
 
-  // Products — delete all and recreate cleanly
-  await prisma.product.deleteMany();
-  await prisma.product.createMany({
-    data: [
-      { name: "Product A", price: 15000 },
-      { name: "Product B", price: 25000 },
-      { name: "Product C", price: 10000 },
-    ],
-  });
-  console.log("✅ Products seeded");
+  // Let's keep it simple: just don't delete products if they already exist, only insert if empty.
+  const prodCount = await prisma.product.count();
+  if (prodCount === 0) {
+    await prisma.product.createMany({
+      data: [
+        { name: "Product A", price: 15000 },
+        { name: "Product B", price: 25000 },
+        { name: "Product C", price: 10000 },
+      ],
+    });
+  }
+  console.log("✅ Products seeded/verified");
 
   // POSM
-  await prisma.posm.deleteMany();
-  await prisma.posm.createMany({
-    data: [
-      { name: "Banner A" },
-      { name: "Sticker B" },
-      { name: "Display Stand C" },
-    ],
-  });
-  console.log("✅ POSM seeded");
+  const posmCount = await prisma.posm.count();
+  if (posmCount === 0) {
+    await prisma.posm.createMany({
+      data: [
+        { name: "Banner A" },
+        { name: "Sticker B" },
+        { name: "Display Stand C" },
+      ],
+    });
+  }
+  console.log("✅ POSM seeded/verified");
 
-  // Outlets
-  await prisma.outlet.deleteMany();
-  await prisma.outlet.createMany({
-    data: [
-      { name: "Warung Pak Bejo", picName: "Pak Bejo", picPhone: "08123456789", topTerm: "COD" },
-      { name: "Toko Maju Jaya", picName: "Bu Sari", picPhone: "08234567890", topTerm: "3 Days" },
-      { name: "Minimarket Sejahtera", picName: "Pak Heri", picPhone: "08345678901", topTerm: "7 Days" },
-    ],
-  });
+  // Outlets — only create if empty, otherwise update them
+  const outletCount = await prisma.outlet.count();
+  if (outletCount === 0) {
+    await prisma.outlet.createMany({
+      data: [
+        { name: "Warung Pak Bejo", picName: "Pak Bejo", picPhone: "08123456789", topTerm: "COD", routeSeq: 1, latitude: -6.2088, longitude: 106.8456 },
+        { name: "Toko Maju Jaya", picName: "Bu Sari", picPhone: "08234567890", topTerm: "3 Days", routeSeq: 2, latitude: -6.2100, longitude: 106.8465 },
+        { name: "Minimarket Sejahtera", picName: "Pak Heri", picPhone: "08345678901", topTerm: "7 Days", routeSeq: 3, latitude: -6.2115, longitude: 106.8475 },
+      ],
+    });
+  } else {
+    // Make sure we apply the routeSeq, lat, and long to the existing ones
+    const list = await prisma.outlet.findMany({ orderBy: { createdAt: "asc" } });
+    const sequenceMap = [
+      { routeSeq: 1, latitude: -6.2088, longitude: 106.8456 },
+      { routeSeq: 2, latitude: -6.2100, longitude: 106.8465 },
+      { routeSeq: 3, latitude: -6.2115, longitude: 106.8475 }
+    ];
+    for (let i = 0; i < list.length; i++) {
+      const seq = sequenceMap[i] || { routeSeq: i + 1, latitude: -6.2088, longitude: 106.8456 };
+      await prisma.outlet.update({
+        where: { id: list[i].id },
+        data: seq
+      });
+    }
+  }
   console.log("✅ Outlets seeded");
 
   console.log("\n🎉 Seed complete!");

@@ -2,12 +2,14 @@
 
 import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Package, ShoppingBasket, Map, ChevronRight, CheckCircle2, Lock, Store, AlertCircle, Loader2 } from "lucide-react";
+import { Package, ShoppingBasket, Map, ChevronRight, CheckCircle2, Lock, Store, AlertCircle, Loader2, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export default function ActivityPage() {
   const [activeTab, setActiveTab] = useState<"product" | "posm" | "activity">("product");
   const [isValidated, setIsValidated] = useState(false);
+  const [isClosed, setIsClosed] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState({ product: "DRAFT", posm: "DRAFT" });
   const [statusLoading, setStatusLoading] = useState(true);
 
@@ -22,6 +24,7 @@ export default function ActivityPage() {
         } else {
           setIsValidated(false);
         }
+        setIsClosed(data.isClosed ?? false);
         setLoadingStatus({
           product: data.productLoadingStatus ?? "DRAFT",
           posm: data.posmLoadingStatus ?? "DRAFT",
@@ -36,9 +39,9 @@ export default function ActivityPage() {
   }, []);
 
   const tabs = [
-    { id: "product", label: "Product", icon: Package, locked: false },
-    { id: "posm", label: "POSM", icon: ShoppingBasket, locked: false },
-    { id: "activity", label: "Activity", icon: Map, locked: !isValidated },
+    { id: "product", label: "Product", icon: Package, locked: isClosed },
+    { id: "posm", label: "POSM", icon: ShoppingBasket, locked: isClosed },
+    { id: "activity", label: "Activity", icon: Map, locked: !isValidated && !isClosed },
   ] as const;
 
   return (
@@ -70,7 +73,16 @@ export default function ActivityPage() {
       </div>
 
       {/* DEV TEST BUTTON — Remove before production */}
-      {!isValidated && (
+      {isClosed && (
+        <div className="px-4 pt-3">
+          <div className="w-full py-3 px-4 rounded-xl border border-rose-200 text-rose-800 bg-rose-50 text-xs font-semibold text-center">
+            🔒 Today's activity has been completed and locked. Loading reports and visits are closed until tomorrow.
+          </div>
+        </div>
+      )}
+
+      {/* DEV TEST BUTTON — Remove before production */}
+      {!isValidated && !isClosed && (
         <div className="px-4 pt-3">
           <button
             onClick={async () => {
@@ -297,59 +309,374 @@ function PosmLoadingTab({ status, onSubmitted }: { status: string; onSubmitted: 
 
 // --- DAILY ACTIVITY TAB ---
 function DailyActivityTab() {
-  const [outlets, setOutlets] = useState<{ id: string; name: string; bills: { outstanding: number }[]; orders: { nettSales: number }[] }[]>([]);
+  interface OutletItem {
+    id: string;
+    name: string;
+    picName: string;
+    picPhone: string;
+    topTerm: string;
+    latitude: number | null;
+    longitude: number | null;
+    photoUrl: string | null;
+    routeSeq: number;
+    bills: { outstanding: number }[];
+    orders: { nettSales: number }[];
+  }
+
+  const [outlets, setOutlets] = useState<OutletItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isClosed, setIsClosed] = useState(false);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  
+  // Registration Form State
+  const [showRegModal, setShowRegModal] = useState(false);
+  const [regName, setRegName] = useState("");
+  const [regPicName, setRegPicName] = useState("");
+  const [regPicPhone, setRegPicPhone] = useState("");
+  const [regTop, setRegTop] = useState("COD");
+  const [regLat, setRegLat] = useState("");
+  const [regLng, setRegLng] = useState("");
+  const [regPhoto, setRegPhoto] = useState<string | null>(null);
+  const [regSubmitting, setRegSubmitting] = useState(false);
+
+  // Get User's Geolocation
+  const getGeoLocation = () => {
+    if (typeof window !== "undefined" && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setUserLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          });
+        },
+        (err) => {
+          console.error("Geolocation error:", err);
+          // Fallback coordinate for demo/development (Warung Pak Bejo area)
+          setUserLocation({ lat: -6.2088, lng: 106.8456 });
+        },
+        { enableHighAccuracy: true }
+      );
+    }
+  };
+
+  const fetchOutletsAndStatus = async () => {
+    try {
+      setLoading(true);
+      const [outletsRes, statusRes] = await Promise.all([
+        fetch("/api/outlets"),
+        fetch("/api/activity/status")
+      ]);
+      if (outletsRes.ok) {
+        const data = await outletsRes.json();
+        setOutlets(data);
+      }
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        setIsClosed(statusData.isClosed);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    fetch("/api/outlets")
-      .then((r) => r.json())
-      .then((data) => { setOutlets(data); setLoading(false); })
-      .catch(() => setLoading(false));
+    fetchOutletsAndStatus();
+    getGeoLocation();
   }, []);
+
+  // Haversine Distance helper (meters)
+  const getDistanceInMeters = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371000; // Radius of the earth in meters
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const d = R * c; // Distance in meters
+    return d;
+  };
+
+  // Adjust route sequence up/down
+  const handleMoveSeq = async (index: number, direction: "up" | "down") => {
+    if (isClosed) return;
+    const newIndex = direction === "up" ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= outlets.length) return;
+
+    const listCopy = [...outlets];
+    // Swap sequence values locally
+    const tempSeq = listCopy[index].routeSeq;
+    listCopy[index].routeSeq = listCopy[newIndex].routeSeq;
+    listCopy[newIndex].routeSeq = tempSeq;
+
+    // Sort again
+    listCopy.sort((a, b) => a.routeSeq - b.routeSeq);
+    setOutlets(listCopy);
+
+    // Save to database (send sequence swaps)
+    // We update both outlets in DB
+    try {
+      await Promise.all([
+        fetch(`/api/outlets/${listCopy[index].id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ routeSeq: listCopy[index].routeSeq })
+        }),
+        fetch(`/api/outlets/${listCopy[newIndex].id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ routeSeq: listCopy[newIndex].routeSeq })
+        })
+      ]);
+    } catch (e) {
+      console.error("Failed to persist sequence change:", e);
+    }
+  };
+
+  // Handle Close Day Route
+  const handleCloseRoute = async () => {
+    if (confirm("Are you sure you want to CLOSE the route for today? You will not be able to perform further loading, visiting or ordering until tomorrow.")) {
+      try {
+        const res = await fetch("/api/activity/status", {
+          method: "POST"
+        });
+        if (res.ok) {
+          alert("Route closed successfully! See you tomorrow.");
+          setIsClosed(true);
+        } else {
+          alert("Failed to close route.");
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
+
+  // Handle Store Registration Camera capture
+  const handleRegCamera = () => {
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = "image/*";
+    fileInput.capture = "environment";
+    fileInput.onchange = (e) => {
+      const target = e.target as HTMLInputElement;
+      if (target.files && target.files[0]) {
+        const file = target.files[0];
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setRegPhoto(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+      }
+    };
+    fileInput.click();
+  };
+
+  // Get registration location
+  const handleGetRegLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        setRegLat(String(pos.coords.latitude));
+        setRegLng(String(pos.coords.longitude));
+        alert("Location coordinates captured!");
+      });
+    } else {
+      alert("GPS not supported.");
+    }
+  };
+
+  // Submit Store Registration
+  const handleRegisterStore = async () => {
+    if (!regName || !regPicName || !regPicPhone) {
+      return alert("Store Name, PIC Name, and PIC Phone are required.");
+    }
+    if (!regLat || !regLng) {
+      return alert("Store coordinates are required. Capture using GPS button.");
+    }
+    if (!regPhoto) {
+      return alert("Store photo is required.");
+    }
+
+    setRegSubmitting(true);
+    try {
+      const res = await fetch("/api/outlets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: regName,
+          picName: regPicName,
+          picPhone: regPicPhone,
+          topTerm: regTop,
+          latitude: parseFloat(regLat),
+          longitude: parseFloat(regLng),
+          photoUrl: regPhoto
+        })
+      });
+
+      if (res.ok) {
+        alert("Store registered successfully and added to route!");
+        setShowRegModal(false);
+        // Clear fields
+        setRegName("");
+        setRegPicName("");
+        setRegPicPhone("");
+        setRegLat("");
+        setRegLng("");
+        setRegPhoto(null);
+        fetchOutletsAndStatus();
+      } else {
+        const err = await res.json();
+        alert(`Failed to register: ${err.error || "Unknown error"}`);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Error registering store.");
+    } finally {
+      setRegSubmitting(false);
+    }
+  };
 
   const totalNett = outlets.reduce((s, o) => s + o.orders.reduce((a, b) => a + b.nettSales, 0), 0);
 
   return (
     <div className="space-y-6">
+      {/* Route Info & Closure control */}
       <div className="grid grid-cols-1 gap-3">
-        <div className="bg-gradient-to-r from-blue-600 to-blue-800 rounded-2xl p-4 text-white shadow-md">
+        <div className="bg-gradient-to-r from-blue-600 to-blue-800 rounded-2xl p-4 text-white shadow-md relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-3 opacity-10 pointer-events-none">
+            <Map className="w-24 h-24 text-white" />
+          </div>
           <p className="text-blue-100 text-sm font-medium mb-1">Total Nett Sales Today</p>
           <div className="flex justify-between items-end">
             <h4 className="text-2xl font-bold">Rp {totalNett.toLocaleString("id-ID")}</h4>
-            <span className="text-sm bg-white/20 px-2 py-1 rounded-lg backdrop-blur-sm">{outlets.length} Outlets</span>
+            <span className="text-sm bg-white/20 px-2.5 py-1 rounded-lg backdrop-blur-sm font-semibold">
+              {isClosed ? "CLOSED" : "ACTIVE"}
+            </span>
+          </div>
+          
+          <div className="mt-4 flex gap-2">
+            {!isClosed ? (
+              <Button 
+                onClick={handleCloseRoute}
+                className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold h-10 text-xs rounded-xl shadow border-none"
+              >
+                Close Today's Route
+              </Button>
+            ) : (
+              <div className="flex-1 text-center bg-rose-900/50 py-2 rounded-xl text-xs font-semibold text-rose-200 border border-rose-800/30">
+                🔒 Route is closed for today. Reopens tomorrow.
+              </div>
+            )}
+            
+            <Button
+              onClick={() => {
+                if (isClosed) return alert("Route is closed for today.");
+                setShowRegModal(true);
+              }}
+              disabled={isClosed}
+              className="bg-white text-blue-800 hover:bg-slate-100 font-bold h-10 text-xs rounded-xl border-none shrink-0"
+            >
+              + Register Store
+            </Button>
           </div>
         </div>
       </div>
 
+      {/* Outlet visited & reordering controls */}
       <div>
-        <h3 className="text-lg font-bold text-slate-800 mb-3 px-1">Outlet Visit List</h3>
+        <div className="flex justify-between items-center mb-3 px-1">
+          <h3 className="text-lg font-bold text-slate-800">Outlet Route</h3>
+          {userLocation ? (
+            <span className="text-[10px] text-emerald-600 font-medium bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span> GPS Active
+            </span>
+          ) : (
+            <span className="text-[10px] text-slate-400 font-medium bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200">
+              Locating...
+            </span>
+          )}
+        </div>
+
         {loading ? (
           <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>
         ) : (
           <div className="space-y-3">
-            {outlets.map((outlet) => {
+            {outlets.map((outlet, index) => {
               const unpaid = outlet.bills.reduce((s, b) => s + b.outstanding, 0);
+              
+              // Calculate distance to current outlet if location exists
+              let distance = -1;
+              let isWithinRadius = false;
+              if (userLocation && outlet.latitude && outlet.longitude) {
+                distance = getDistanceInMeters(userLocation.lat, userLocation.lng, outlet.latitude, outlet.longitude);
+                isWithinRadius = distance <= 50;
+              }
+
               return (
                 <Card key={outlet.id} className="border-none shadow-sm hover:shadow-md transition-shadow overflow-hidden rounded-2xl">
                   <div className="p-4 flex items-center">
-                    <div className="h-12 w-12 rounded-xl bg-slate-100 flex items-center justify-center mr-4 shrink-0">
-                      <Store className="h-6 w-6 text-slate-400" />
+                    {/* Ordering control handle */}
+                    <div className="flex flex-col mr-2 space-y-1">
+                      <button 
+                        disabled={index === 0 || isClosed}
+                        onClick={() => handleMoveSeq(index, "up")}
+                        className="p-1 rounded text-slate-400 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+                      >
+                        ▲
+                      </button>
+                      <button 
+                        disabled={index === outlets.length - 1 || isClosed}
+                        onClick={() => handleMoveSeq(index, "down")}
+                        className="p-1 rounded text-slate-400 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+                      >
+                        ▼
+                      </button>
                     </div>
+
+                    <div className="h-12 w-12 rounded-xl bg-slate-100 flex items-center justify-center mr-3 shrink-0 relative">
+                      <Store className="h-6 w-6 text-slate-400" />
+                      <span className="absolute -top-1.5 -left-1.5 bg-blue-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] font-bold">
+                        {index + 1}
+                      </span>
+                    </div>
+
                     <div className="flex-1 min-w-0">
                       <h4 className="text-base font-bold text-slate-900 truncate">{outlet.name}</h4>
-                      <div className="flex items-center text-xs text-slate-500 mt-1 space-x-3">
+                      <div className="flex items-center text-[10px] text-slate-500 mt-1 space-x-2">
                         {unpaid > 0 ? (
-                          <span className="text-rose-600 font-medium bg-rose-50 px-1.5 py-0.5 rounded">
+                          <span className="text-rose-600 font-semibold bg-rose-50 px-1.5 py-0.5 rounded">
                             Unpaid: Rp {unpaid.toLocaleString("id-ID")}
                           </span>
                         ) : (
-                          <span className="text-emerald-600 font-medium bg-emerald-50 px-1.5 py-0.5 rounded">Settled</span>
+                          <span className="text-emerald-600 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">Settled</span>
+                        )}
+                        {distance >= 0 && (
+                          <span className={`px-1.5 py-0.5 rounded font-semibold ${isWithinRadius ? 'text-emerald-600 bg-emerald-50 border border-emerald-100' : 'text-rose-600 bg-rose-50 border border-rose-100'}`}>
+                            {distance < 1000 ? `${Math.round(distance)}m` : `${(distance/1000).toFixed(1)}km`}
+                          </span>
                         )}
                       </div>
                     </div>
-                    <a href={`/visit/${outlet.id}`} className="shrink-0 text-blue-600 ml-2 flex h-8 w-8 items-center justify-center rounded-md hover:bg-slate-100 transition-colors">
-                      <ChevronRight className="h-5 w-5" />
-                    </a>
+
+                    {isClosed ? (
+                      <span className="text-slate-300 font-semibold text-xs py-1 px-2 shrink-0 border border-slate-100 rounded-lg bg-slate-50 select-none">
+                        Closed
+                      </span>
+                    ) : isWithinRadius ? (
+                      <a href={`/visit/${outlet.id}`} className="shrink-0 text-white bg-blue-600 hover:bg-blue-700 ml-2 flex h-8 px-3 items-center justify-center rounded-lg text-xs font-bold transition-colors shadow">
+                        Visit
+                      </a>
+                    ) : (
+                      <button 
+                        onClick={() => alert(`Visiting restricted. You must be standing within 50m of the store. Currently: ${distance >= 0 ? Math.round(distance) : 'Unknown'} meters away.`)}
+                        className="shrink-0 text-slate-400 bg-slate-100 hover:bg-slate-200 ml-2 flex h-8 px-2 items-center justify-center rounded-lg text-[10px] font-bold transition-colors"
+                      >
+                        🔒 Visit
+                      </button>
+                    )}
                   </div>
                 </Card>
               );
@@ -357,6 +684,73 @@ function DailyActivityTab() {
           </div>
         )}
       </div>
+
+      {/* Store Registration Modal */}
+      {showRegModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-md rounded-3xl p-5 space-y-4 shadow-xl animate-in slide-in-from-bottom-6 duration-300 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+              <h3 className="text-lg font-bold text-slate-900">Register New Store</h3>
+              <button onClick={() => setShowRegModal(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg">×</button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-500 mb-1 block">Store Name</label>
+                <Input value={regName} onChange={(e) => setRegName(e.target.value)} placeholder="e.g. Toko Berkah" className="h-10 border-slate-200" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 mb-1 block">PIC Name</label>
+                  <Input value={regPicName} onChange={(e) => setRegPicName(e.target.value)} placeholder="e.g. Pak Ahmad" className="h-10 border-slate-200" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 mb-1 block">PIC Phone</label>
+                  <Input value={regPicPhone} onChange={(e) => setRegPicPhone(e.target.value)} placeholder="e.g. 0812xxxx" className="h-10 border-slate-200" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-500 mb-1 block">Payment Term</label>
+                <select value={regTop} onChange={(e) => setRegTop(e.target.value)} className="w-full h-10 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm focus:outline-none">
+                  <option value="COD">COD</option>
+                  <option value="3 Days">3 Days</option>
+                  <option value="4 Days">4 Days</option>
+                  <option value="7 Days">7 Days</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-500 mb-1 block">Store GPS Coordinates (Required)</label>
+                <div className="flex gap-2">
+                  <Input readOnly value={regLat ? `${parseFloat(regLat).toFixed(4)}, ${parseFloat(regLng).toFixed(4)}` : ""} placeholder="Not captured yet" className="h-10 border-slate-200 bg-slate-50 flex-1" />
+                  <Button onClick={handleGetRegLocation} className="bg-blue-600 text-white h-10 px-3 shrink-0 text-xs">
+                    Get Location
+                  </Button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-500 mb-2 block">Store Exterior Photo (Required)</label>
+                {regPhoto ? (
+                  <div className="relative rounded-xl overflow-hidden border border-slate-200 h-28">
+                    <img src={regPhoto} alt="Store exterior" className="w-full h-full object-cover" />
+                    <button onClick={() => setRegPhoto(null)} className="absolute top-1 right-1 bg-rose-500 text-white text-[10px] p-1 px-2 rounded-full font-bold">Remove</button>
+                  </div>
+                ) : (
+                  <button onClick={handleRegCamera} className="w-full h-24 border-2 border-dashed border-blue-200 bg-blue-50/50 rounded-xl flex flex-col items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors">
+                    <Camera className="h-5 w-5 mb-1" />
+                    <span className="text-xs font-medium">Capture Photo of Store front</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <Button onClick={handleRegisterStore} disabled={regSubmitting} className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg mt-2 flex items-center justify-center">
+              {regSubmitting ? <Loader2 className="w-5 h-5 animate-spin mr-1" /> : "Save Registered Store"}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

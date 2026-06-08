@@ -3,10 +3,10 @@ import { prisma } from "@/lib/prisma";
 
 export async function GET(
   req: Request,
-  { params }: { params: Promise<{ custId: string }> }
+  { params }: { params: Promise<{ billId: string }> }
 ) {
   try {
-    const { custId } = await params;
+    const { billId: custId } = await params;
 
     const bills = await prisma.bill.findMany({
       where: {

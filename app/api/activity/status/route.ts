@@ -27,15 +27,60 @@ export async function GET(req: Request) {
     },
   });
 
+  // Check daily route closure status
+  const closure = await prisma.routeClosure.findFirst({
+    where: {
+      userId: session.user.id,
+      date: { gte: today },
+    },
+  });
+
   // Is validated if both exist and both are APPROVED
   const isProductApproved = productLoading?.status === "APPROVED";
   const isPosmApproved = posmLoading?.status === "APPROVED";
   
   const isValidated = isProductApproved && isPosmApproved;
+  const isClosed = closure?.isClosed || false;
 
   return NextResponse.json({
     isValidated,
+    isClosed,
     productLoadingStatus: productLoading?.status || "DRAFT",
-    posmLoadingStatus: posmLoading?.status || "DRAFT"
+    posmLoadingStatus: posmLoading?.status || "DRAFT",
+    user: { id: session.user.id, name: session.user.name }
   });
+}
+
+export async function POST(req: Request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  try {
+    const closure = await prisma.routeClosure.upsert({
+      where: {
+        userId_date: {
+          userId: session.user.id,
+          date: today,
+        },
+      },
+      update: {
+        isClosed: true,
+      },
+      create: {
+        userId: session.user.id,
+        date: today,
+        isClosed: true,
+      },
+    });
+
+    return NextResponse.json({ success: true, closure });
+  } catch (error) {
+    console.error("[Status] POST error:", error);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
 }

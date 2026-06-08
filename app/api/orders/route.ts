@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
@@ -11,7 +12,7 @@ const orderItemSchema = z.object({
 });
 
 const orderSchema = z.object({
-  userId: z.string(),
+  userId: z.string().optional(),
   outletId: z.string(),
   grossSales: z.number().min(0),
   discount: z.number().min(0).default(0),
@@ -22,6 +23,12 @@ const orderSchema = z.object({
 });
 
 export async function POST(req: Request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const sessionUserId = session.user.id;
+
   try {
     const body = await req.json();
     const validatedData = orderSchema.parse(body);
@@ -30,7 +37,7 @@ export async function POST(req: Request) {
       // Create the order and items
       const newOrder = await tx.order.create({
         data: {
-          userId: validatedData.userId,
+          userId: sessionUserId,
           outletId: validatedData.outletId,
           grossSales: validatedData.grossSales,
           discount: validatedData.discount,
@@ -68,6 +75,7 @@ export async function POST(req: Request) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ errors: error.issues }, { status: 400 });
     }
+    console.error("[Orders] POST error:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
