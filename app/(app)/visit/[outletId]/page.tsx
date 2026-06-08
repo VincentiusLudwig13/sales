@@ -70,7 +70,7 @@ export default function StoreVisitPage() {
   const [loading, setLoading] = useState(true);
   
   // Keep track of previously saved stock checks & posm checks
-  const [savedStocks, setSavedStocks] = useState<Record<string, { qty: number; expiryDate: string }>>({});
+  const [savedStocks, setSavedStocks] = useState<Record<string, { qty: number }>>({});
   const [savedPosms, setSavedPosms] = useState<Record<string, number>>({});
 
   const tabs = [
@@ -105,11 +105,10 @@ export default function StoreVisitPage() {
         const vData = await visitRes.json();
         if (vData) {
           // Process stockChecks
-          const stockMap: Record<string, { qty: number; expiryDate: string }> = {};
+          const stockMap: Record<string, { qty: number }> = {};
           (vData.stockChecks ?? []).forEach((sc: any) => {
             stockMap[sc.productId] = {
-              qty: sc.qty,
-              expiryDate: sc.expiryDate ? sc.expiryDate.split("T")[0] : ""
+              qty: sc.qty
             };
           });
           setSavedStocks(stockMap);
@@ -210,18 +209,18 @@ export default function StoreVisitPage() {
 interface CheckStockTabProps {
   products: Product[];
   outletId: string;
-  initialStocks: Record<string, { qty: number; expiryDate: string }>;
+  initialStocks: Record<string, { qty: number }>;
   onSave: () => void;
 }
 
 function CheckStockTab({ products, outletId, initialStocks, onSave }: CheckStockTabProps) {
-  const [stocks, setStocks] = useState<Record<string, { qty: number; expiryDate: string }>>({});
+  const [stocks, setStocks] = useState<Record<string, { qty: number }>>({});
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    const merged: Record<string, { qty: number; expiryDate: string }> = {};
+    const merged: Record<string, { qty: number }> = {};
     products.forEach((p) => {
-      merged[p.id] = initialStocks[p.id] || { qty: 0, expiryDate: "" };
+      merged[p.id] = initialStocks[p.id] || { qty: 0 };
     });
     setStocks(merged);
   }, [products, initialStocks]);
@@ -233,13 +232,6 @@ function CheckStockTab({ products, outletId, initialStocks, onSave }: CheckStock
     }));
   };
 
-  const handleDateChange = (productId: string, val: string) => {
-    setStocks((prev) => ({
-      ...prev,
-      [productId]: { ...prev[productId], expiryDate: val }
-    }));
-  };
-
   const handleSave = async () => {
     setSubmitting(true);
     try {
@@ -247,8 +239,7 @@ function CheckStockTab({ products, outletId, initialStocks, onSave }: CheckStock
         .filter(([_, data]) => data.qty > 0)
         .map(([productId, data]) => ({
           productId,
-          qty: data.qty,
-          expiryDate: data.expiryDate || undefined
+          qty: data.qty
         }));
 
       const res = await fetch(`/api/visit/${outletId}`, {
@@ -277,7 +268,7 @@ function CheckStockTab({ products, outletId, initialStocks, onSave }: CheckStock
       <Card className="border-none shadow-sm rounded-2xl overflow-hidden">
         <div className="divide-y divide-slate-100">
           {products.map((item) => {
-            const current = stocks[item.id] || { qty: 0, expiryDate: "" };
+            const current = stocks[item.id] || { qty: 0 };
             return (
               <div key={item.id} className="p-4 space-y-3">
                 <div className="flex justify-between items-center">
@@ -291,17 +282,8 @@ function CheckStockTab({ products, outletId, initialStocks, onSave }: CheckStock
                     <label className="text-xs text-slate-500 mb-1 block">Qty</label>
                     <Input 
                       type="number" 
-                      value={current.qty || ""} 
-                      onChange={(e) => handleQtyChange(item.id, parseInt(e.target.value) || 0)}
-                      className="h-10 bg-slate-50 border-slate-200" 
-                    />
-                  </div>
-                  <div className="flex-[2]">
-                    <label className="text-xs text-slate-500 mb-1 block">Expiry Date</label>
-                    <Input 
-                      type="date" 
-                      value={current.expiryDate} 
-                      onChange={(e) => handleDateChange(item.id, e.target.value)}
+                      value={current.qty === 0 ? "" : current.qty} 
+                      onChange={(e) => handleQtyChange(item.id, e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
                       className="h-10 bg-slate-50 border-slate-200" 
                     />
                   </div>
@@ -398,8 +380,8 @@ function CheckPosmTab({ posms, outletId, initialPosms, onSave }: CheckPosmTabPro
                 <div className="w-24">
                   <Input 
                     type="number" 
-                    value={qty || ""} 
-                    onChange={(e) => handleQtyChange(item.id, parseInt(e.target.value) || 0)}
+                    value={qty === 0 ? "" : qty} 
+                    onChange={(e) => handleQtyChange(item.id, e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
                     className="h-10 bg-slate-50 border-slate-200 text-center" 
                   />
                 </div>

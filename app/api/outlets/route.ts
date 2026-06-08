@@ -7,8 +7,8 @@ export async function GET() {
     where: { isActive: true },
     orderBy: { routeSeq: "asc" },
     include: {
-      bills: { select: { outstanding: true, status: true } },
-      orders: { select: { nettSales: true } },
+      bills: { select: { outstanding: true, value: true, settled: true, status: true } },
+      orders: { select: { nettSales: true, topTerm: true } },
     },
   });
   return NextResponse.json(outlets);
@@ -22,7 +22,7 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
-    const { name, picName, picPhone, latitude, longitude, topTerm, photoUrl } = body;
+    const { name, picName, picPhone, latitude, longitude, topTerm, photoUrl, routeGroup } = body;
 
     if (!name || !picName || !picPhone) {
       return NextResponse.json({ error: "Name, PIC Name, and PIC Phone are required" }, { status: 400 });
@@ -44,6 +44,7 @@ export async function POST(req: Request) {
         topTerm: topTerm || "COD",
         photoUrl: photoUrl || null,
         routeSeq: nextSeq,
+        routeGroup: routeGroup || "Route A",
         isActive: true,
       },
     });

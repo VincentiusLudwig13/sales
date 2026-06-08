@@ -188,8 +188,8 @@ function ProductLoadingTab({ status, onSubmitted }: { status: string; onSubmitte
                     <input
                       type="number"
                       min={0}
-                      value={p.qty}
-                      onChange={(e) => updateQty(p.id, parseInt(e.target.value) || 0)}
+                      value={p.qty === 0 ? "" : p.qty}
+                      onChange={(e) => updateQty(p.id, e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
                       className="w-full text-center text-sm font-bold text-blue-600 bg-blue-50 py-1 rounded-md border border-blue-100 focus:outline-none focus:ring-1 focus:ring-blue-300"
                     />
                   )}
@@ -282,8 +282,8 @@ function PosmLoadingTab({ status, onSubmitted }: { status: string; onSubmitted: 
                     <input
                       type="number"
                       min={0}
-                      value={p.qty}
-                      onChange={(e) => updateQty(p.id, parseInt(e.target.value) || 0)}
+                      value={p.qty === 0 ? "" : p.qty}
+                      onChange={(e) => updateQty(p.id, e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
                       className="w-full text-center text-sm font-bold text-blue-600 bg-blue-50 py-1 rounded-md border border-blue-100 focus:outline-none focus:ring-1 focus:ring-blue-300"
                     />
                   )}
@@ -319,24 +319,27 @@ function DailyActivityTab() {
     longitude: number | null;
     photoUrl: string | null;
     routeSeq: number;
-    bills: { outstanding: number }[];
-    orders: { nettSales: number }[];
+    routeGroup: string;
+    bills: { outstanding: number; value: number; settled: number }[];
+    orders: { nettSales: number; topTerm: string }[];
   }
 
   const [outlets, setOutlets] = useState<OutletItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isClosed, setIsClosed] = useState(false);
+  const [selectedRoute, setSelectedRoute] = useState<"Route A" | "Route B" | "Route C">("Route A");
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [activeTooltipId, setActiveTooltipId] = useState<string | null>(null);
   
   // Registration Form State
   const [showRegModal, setShowRegModal] = useState(false);
   const [regName, setRegName] = useState("");
   const [regPicName, setRegPicName] = useState("");
   const [regPicPhone, setRegPicPhone] = useState("");
-  const [regTop, setRegTop] = useState("COD");
   const [regLat, setRegLat] = useState("");
   const [regLng, setRegLng] = useState("");
   const [regPhoto, setRegPhoto] = useState<string | null>(null);
+  const [regRouteGroup, setRegRouteGroup] = useState<"Route A" | "Route B" | "Route C">("Route A");
   const [regSubmitting, setRegSubmitting] = useState(false);
 
   // Get User's Geolocation
@@ -400,35 +403,42 @@ function DailyActivityTab() {
     return d;
   };
 
-  // Adjust route sequence up/down
+  // Adjust route sequence up/down within active route
+  const activeOutlets = outlets.filter((o) => o.routeGroup === selectedRoute);
+
   const handleMoveSeq = async (index: number, direction: "up" | "down") => {
     if (isClosed) return;
     const newIndex = direction === "up" ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= outlets.length) return;
+    if (newIndex < 0 || newIndex >= activeOutlets.length) return;
 
     const listCopy = [...outlets];
+    // Find absolute indices in full list
+    const item1 = activeOutlets[index];
+    const item2 = activeOutlets[newIndex];
+    const fullIndex1 = listCopy.findIndex((o) => o.id === item1.id);
+    const fullIndex2 = listCopy.findIndex((o) => o.id === item2.id);
+
     // Swap sequence values locally
-    const tempSeq = listCopy[index].routeSeq;
-    listCopy[index].routeSeq = listCopy[newIndex].routeSeq;
-    listCopy[newIndex].routeSeq = tempSeq;
+    const tempSeq = listCopy[fullIndex1].routeSeq;
+    listCopy[fullIndex1].routeSeq = listCopy[fullIndex2].routeSeq;
+    listCopy[fullIndex2].routeSeq = tempSeq;
 
     // Sort again
     listCopy.sort((a, b) => a.routeSeq - b.routeSeq);
     setOutlets(listCopy);
 
     // Save to database (send sequence swaps)
-    // We update both outlets in DB
     try {
       await Promise.all([
-        fetch(`/api/outlets/${listCopy[index].id}`, {
+        fetch(`/api/outlets/${listCopy[fullIndex1].id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ routeSeq: listCopy[index].routeSeq })
+          body: JSON.stringify({ routeSeq: listCopy[fullIndex1].routeSeq })
         }),
-        fetch(`/api/outlets/${listCopy[newIndex].id}`, {
+        fetch(`/api/outlets/${listCopy[fullIndex2].id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ routeSeq: listCopy[newIndex].routeSeq })
+          body: JSON.stringify({ routeSeq: listCopy[fullIndex2].routeSeq })
         })
       ]);
     } catch (e) {
@@ -509,10 +519,11 @@ function DailyActivityTab() {
           name: regName,
           picName: regPicName,
           picPhone: regPicPhone,
-          topTerm: regTop,
+          topTerm: "COD", // default to COD in DB, can be modified during order placement
           latitude: parseFloat(regLat),
           longitude: parseFloat(regLng),
-          photoUrl: regPhoto
+          photoUrl: regPhoto,
+          routeGroup: regRouteGroup
         })
       });
 
@@ -539,25 +550,95 @@ function DailyActivityTab() {
     }
   };
 
-  const totalNett = outlets.reduce((s, o) => s + o.orders.reduce((a, b) => a + b.nettSales, 0), 0);
+  // Metrics calculation based on selectedRoute
+  let totalNett = 0;
+  let codNett = 0;
+  let topNett = 0;
+  let collectionTarget = 0; 
+  let collectionActual = 0; 
+
+  activeOutlets.forEach((o) => {
+    o.orders.forEach((ord) => {
+      totalNett += ord.nettSales;
+      if (ord.topTerm === "COD") {
+        codNett += ord.nettSales;
+      } else {
+        topNett += ord.nettSales;
+      }
+    });
+
+    o.bills.forEach((b) => {
+      collectionTarget += b.value;
+      collectionActual += b.settled;
+    });
+  });
 
   return (
     <div className="space-y-6">
+      {/* Route selector dropdown */}
+      <div className="flex flex-col space-y-1 bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm">
+        <label className="text-xs font-bold text-slate-500">Active Route Group</label>
+        <select
+          value={selectedRoute}
+          onChange={(e) => {
+            setSelectedRoute(e.target.value as any);
+            setActiveTooltipId(null);
+          }}
+          className="w-full h-10 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="Route A">Route A</option>
+          <option value="Route B">Route B</option>
+          <option value="Route C">Route C</option>
+        </select>
+      </div>
+
       {/* Route Info & Closure control */}
       <div className="grid grid-cols-1 gap-3">
-        <div className="bg-gradient-to-r from-blue-600 to-blue-800 rounded-2xl p-4 text-white shadow-md relative overflow-hidden">
+        <div className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-5 text-white shadow-lg relative overflow-hidden">
           <div className="absolute top-0 right-0 p-3 opacity-10 pointer-events-none">
             <Map className="w-24 h-24 text-white" />
           </div>
-          <p className="text-blue-100 text-sm font-medium mb-1">Total Nett Sales Today</p>
-          <div className="flex justify-between items-end">
-            <h4 className="text-2xl font-bold">Rp {totalNett.toLocaleString("id-ID")}</h4>
-            <span className="text-sm bg-white/20 px-2.5 py-1 rounded-lg backdrop-blur-sm font-semibold">
+          
+          <div className="flex justify-between items-center mb-3">
+            <h4 className="text-sm font-semibold tracking-wide uppercase text-blue-100">{selectedRoute} Sales Summary</h4>
+            <span className="text-xs bg-white/20 px-2.5 py-1 rounded-full backdrop-blur-sm font-bold border border-white/10">
               {isClosed ? "CLOSED" : "ACTIVE"}
             </span>
           </div>
+
+          <div className="grid grid-cols-3 gap-2 text-center bg-blue-900/35 p-3 rounded-2xl border border-white/5 mb-4">
+            <div>
+              <p className="text-[10px] text-blue-200">Total Net Sales</p>
+              <p className="text-sm font-bold mt-0.5">Rp {totalNett.toLocaleString("id-ID")}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-blue-200">COD Net Sales</p>
+              <p className="text-sm font-bold mt-0.5 text-emerald-300">Rp {codNett.toLocaleString("id-ID")}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-blue-200">With-TOP Sales</p>
+              <p className="text-sm font-bold mt-0.5 text-amber-300">Rp {topNett.toLocaleString("id-ID")}</p>
+            </div>
+          </div>
+
+          <div className="bg-white/10 rounded-2xl p-3 text-xs border border-white/5 space-y-1.5 mb-4">
+            <div className="flex justify-between font-semibold">
+              <span className="text-blue-100">Collection target (Total Bills)</span>
+              <span>Rp {collectionTarget.toLocaleString("id-ID")}</span>
+            </div>
+            <div className="flex justify-between font-semibold">
+              <span className="text-blue-100">Collection actual (Settled Bills)</span>
+              <span className="text-emerald-300">Rp {collectionActual.toLocaleString("id-ID")}</span>
+            </div>
+            <div className="w-full bg-blue-900/50 h-2 rounded-full overflow-hidden mt-1.5">
+              <div 
+                className="bg-emerald-400 h-full rounded-full transition-all duration-500" 
+                style={{ width: `${collectionTarget > 0 ? (collectionActual / collectionTarget) * 100 : 0}%` }}
+              ></div>
+            </div>
+          </div>
           
-          <div className="mt-4 flex gap-2">
+          <div className="flex gap-2">
             {!isClosed ? (
               <Button 
                 onClick={handleCloseRoute}
@@ -567,13 +648,14 @@ function DailyActivityTab() {
               </Button>
             ) : (
               <div className="flex-1 text-center bg-rose-900/50 py-2 rounded-xl text-xs font-semibold text-rose-200 border border-rose-800/30">
-                🔒 Route is closed for today. Reopens tomorrow.
+                🔒 Route closed. Loading &amp; visits locked.
               </div>
             )}
             
             <Button
               onClick={() => {
                 if (isClosed) return alert("Route is closed for today.");
+                setRegRouteGroup(selectedRoute); // auto set registration route to current
                 setShowRegModal(true);
               }}
               disabled={isClosed}
@@ -588,7 +670,7 @@ function DailyActivityTab() {
       {/* Outlet visited & reordering controls */}
       <div>
         <div className="flex justify-between items-center mb-3 px-1">
-          <h3 className="text-lg font-bold text-slate-800">Outlet Route</h3>
+          <h3 className="text-lg font-bold text-slate-800">{selectedRoute} Outlets</h3>
           {userLocation ? (
             <span className="text-[10px] text-emerald-600 font-medium bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 flex items-center gap-1">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span> GPS Active
@@ -602,9 +684,13 @@ function DailyActivityTab() {
 
         {loading ? (
           <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>
+        ) : activeOutlets.length === 0 ? (
+          <div className="text-center py-10 bg-white border border-dashed border-slate-200 rounded-3xl text-xs text-slate-400 font-medium">
+            No stores registered in {selectedRoute} yet.
+          </div>
         ) : (
           <div className="space-y-3">
-            {outlets.map((outlet, index) => {
+            {activeOutlets.map((outlet, index) => {
               const unpaid = outlet.bills.reduce((s, b) => s + b.outstanding, 0);
               
               // Calculate distance to current outlet if location exists
@@ -628,7 +714,7 @@ function DailyActivityTab() {
                         ▲
                       </button>
                       <button 
-                        disabled={index === outlets.length - 1 || isClosed}
+                        disabled={index === activeOutlets.length - 1 || isClosed}
                         onClick={() => handleMoveSeq(index, "down")}
                         className="p-1 rounded text-slate-400 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
                       >
@@ -636,15 +722,21 @@ function DailyActivityTab() {
                       </button>
                     </div>
 
-                    <div className="h-12 w-12 rounded-xl bg-slate-100 flex items-center justify-center mr-3 shrink-0 relative">
+                    <div 
+                      className="h-12 w-12 rounded-xl bg-slate-100 flex items-center justify-center mr-3 shrink-0 relative cursor-pointer hover:bg-slate-200 transition-colors"
+                      onClick={() => setActiveTooltipId(activeTooltipId === outlet.id ? null : outlet.id)}
+                    >
                       <Store className="h-6 w-6 text-slate-400" />
                       <span className="absolute -top-1.5 -left-1.5 bg-blue-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] font-bold">
                         {index + 1}
                       </span>
                     </div>
 
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-base font-bold text-slate-900 truncate">{outlet.name}</h4>
+                    <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setActiveTooltipId(activeTooltipId === outlet.id ? null : outlet.id)}>
+                      <h4 className="text-base font-bold text-slate-900 truncate flex items-center gap-1.5">
+                        {outlet.name}
+                        <span className="text-[10px] text-blue-600 bg-blue-50 px-1 rounded font-normal shrink-0">info</span>
+                      </h4>
                       <div className="flex items-center text-[10px] text-slate-500 mt-1 space-x-2">
                         {unpaid > 0 ? (
                           <span className="text-rose-600 font-semibold bg-rose-50 px-1.5 py-0.5 rounded">
@@ -678,6 +770,42 @@ function DailyActivityTab() {
                       </button>
                     )}
                   </div>
+
+                  {/* Inline Tooltip drawer with map and exterior photo */}
+                  {activeTooltipId === outlet.id && (
+                    <div className="border-t border-slate-100 bg-slate-50/50 p-4 space-y-3.5 animate-in slide-in-from-top duration-200">
+                      <div className="grid grid-cols-2 gap-3">
+                        {/* Static OpenStreetMap Open source Iframe map */}
+                        <div className="rounded-xl overflow-hidden border border-slate-200 h-28 relative bg-slate-100">
+                          {outlet.latitude && outlet.longitude ? (
+                            <iframe
+                              className="w-full h-full border-none"
+                              src={`https://www.openstreetmap.org/export/embed.html?bbox=${outlet.longitude - 0.002}%2C${outlet.latitude - 0.001}%2C${outlet.longitude + 0.002}%2C${outlet.latitude + 0.001}&layer=mapnik&marker=${outlet.latitude}%2C${outlet.longitude}`}
+                            ></iframe>
+                          ) : (
+                            <div className="flex items-center justify-center h-full text-[10px] text-slate-400">Map unavailable</div>
+                          )}
+                          <div className="absolute bottom-1 right-1 bg-white/85 text-[8px] px-1 py-0.5 rounded shadow text-slate-500 font-semibold pointer-events-none">OSM</div>
+                        </div>
+
+                        {/* Store front exterior photo */}
+                        <div className="rounded-xl overflow-hidden border border-slate-200 h-28 relative bg-slate-100">
+                          {outlet.photoUrl ? (
+                            <img src={outlet.photoUrl} alt="Store front" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="flex items-center justify-center h-full text-[10px] text-slate-400 text-center px-2">No front photo uploaded</div>
+                          )}
+                          <div className="absolute bottom-1 right-1 bg-black/55 text-[8px] px-1 py-0.5 rounded text-white font-semibold pointer-events-none">Exterior</div>
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] text-slate-500 space-y-1 bg-white p-2.5 rounded-xl border border-slate-100">
+                        <div className="flex justify-between"><span className="font-semibold text-slate-400">PIC:</span> <span className="font-bold text-slate-800">{outlet.picName} ({outlet.picPhone})</span></div>
+                        <div className="flex justify-between"><span className="font-semibold text-slate-400">Term of Payment:</span> <span className="font-bold text-slate-800">{outlet.topTerm}</span></div>
+                        <div className="flex justify-between"><span className="font-semibold text-slate-400">Coordinates:</span> <span className="font-bold text-slate-800">{outlet.latitude?.toFixed(5) ?? "-"}, {outlet.longitude?.toFixed(5) ?? "-"}</span></div>
+                      </div>
+                    </div>
+                  )}
                 </Card>
               );
             })}
@@ -709,14 +837,15 @@ function DailyActivityTab() {
                   <Input value={regPicPhone} onChange={(e) => setRegPicPhone(e.target.value)} placeholder="e.g. 0812xxxx" className="h-10 border-slate-200" />
                 </div>
               </div>
-              <div>
-                <label className="text-xs font-semibold text-slate-500 mb-1 block">Payment Term</label>
-                <select value={regTop} onChange={(e) => setRegTop(e.target.value)} className="w-full h-10 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm focus:outline-none">
-                  <option value="COD">COD</option>
-                  <option value="3 Days">3 Days</option>
-                  <option value="4 Days">4 Days</option>
-                  <option value="7 Days">7 Days</option>
-                </select>
+              <div className="grid grid-cols-1">
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 mb-1 block">Assign Route</label>
+                  <select value={regRouteGroup} onChange={(e) => setRegRouteGroup(e.target.value as any)} className="w-full h-10 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm focus:outline-none">
+                    <option value="Route A">Route A</option>
+                    <option value="Route B">Route B</option>
+                    <option value="Route C">Route C</option>
+                  </select>
+                </div>
               </div>
 
               <div>

@@ -58,21 +58,21 @@ async function main() {
   if (outletCount === 0) {
     await prisma.outlet.createMany({
       data: [
-        { name: "Warung Pak Bejo", picName: "Pak Bejo", picPhone: "08123456789", topTerm: "COD", routeSeq: 1, latitude: -6.2088, longitude: 106.8456 },
-        { name: "Toko Maju Jaya", picName: "Bu Sari", picPhone: "08234567890", topTerm: "3 Days", routeSeq: 2, latitude: -6.2100, longitude: 106.8465 },
-        { name: "Minimarket Sejahtera", picName: "Pak Heri", picPhone: "08345678901", topTerm: "7 Days", routeSeq: 3, latitude: -6.2115, longitude: 106.8475 },
+        { name: "Warung Pak Bejo", picName: "Pak Bejo", picPhone: "08123456789", topTerm: "COD", routeSeq: 1, routeGroup: "Route A", latitude: -6.2088, longitude: 106.8456 },
+        { name: "Toko Maju Jaya", picName: "Bu Sari", picPhone: "08234567890", topTerm: "3 Days", routeSeq: 2, routeGroup: "Route B", latitude: -6.2100, longitude: 106.8465 },
+        { name: "Minimarket Sejahtera", picName: "Pak Heri", picPhone: "08345678901", topTerm: "7 Days", routeSeq: 3, routeGroup: "Route C", latitude: -6.2115, longitude: 106.8475 },
       ],
     });
   } else {
-    // Make sure we apply the routeSeq, lat, and long to the existing ones
+    // Make sure we apply the routeSeq, routeGroup, lat, and long to the existing ones
     const list = await prisma.outlet.findMany({ orderBy: { createdAt: "asc" } });
     const sequenceMap = [
-      { routeSeq: 1, latitude: -6.2088, longitude: 106.8456 },
-      { routeSeq: 2, latitude: -6.2100, longitude: 106.8465 },
-      { routeSeq: 3, latitude: -6.2115, longitude: 106.8475 }
+      { routeSeq: 1, routeGroup: "Route A", latitude: -6.2088, longitude: 106.8456 },
+      { routeSeq: 2, routeGroup: "Route B", latitude: -6.2100, longitude: 106.8465 },
+      { routeSeq: 3, routeGroup: "Route C", latitude: -6.2115, longitude: 106.8475 }
     ];
     for (let i = 0; i < list.length; i++) {
-      const seq = sequenceMap[i] || { routeSeq: i + 1, latitude: -6.2088, longitude: 106.8456 };
+      const seq = sequenceMap[i] || { routeSeq: i + 1, routeGroup: "Route A", latitude: -6.2088, longitude: 106.8456 };
       await prisma.outlet.update({
         where: { id: list[i].id },
         data: seq
