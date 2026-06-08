@@ -6,12 +6,16 @@ import { Package, ShoppingBasket, Map, ChevronRight, CheckCircle2, Lock, Store }
 import { Button } from "@/components/ui/button";
 
 export default function ActivityPage() {
-  const [activeTab, setActiveTab] = useState<"product" | "posm" | "activity">("activity");
+  const [activeTab, setActiveTab] = useState<"product" | "posm" | "activity">("product");
+  
+  // Mock validation state for demonstration. 
+  // Once hooked to backend, this becomes true when Admin approves both.
+  const [isValidated, setIsValidated] = useState(false);
 
   const tabs = [
-    { id: "activity", label: "Activity", icon: Map },
     { id: "product", label: "Product", icon: Package },
     { id: "posm", label: "POSM", icon: ShoppingBasket },
+    { id: "activity", label: "Activity", icon: Map, locked: !isValidated },
   ] as const;
 
   return (
@@ -20,19 +24,25 @@ export default function ActivityPage() {
         <h2 className="text-2xl font-bold text-slate-900 mb-4">Daily Activity</h2>
         
         {/* Tab Navigation */}
-        <div className="flex p-1 space-x-1 bg-slate-100 rounded-2xl">
+        <div className="flex p-1 space-x-1 bg-slate-100 rounded-2xl relative">
           {tabs.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                if (!tab.locked) setActiveTab(tab.id);
+              }}
+              disabled={tab.locked}
               className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-3 rounded-xl text-sm font-medium transition-all duration-300 ${
                 activeTab === tab.id
                   ? "bg-white text-blue-600 shadow-sm"
+                  : tab.locked
+                  ? "text-slate-300 cursor-not-allowed opacity-60"
                   : "text-slate-500 hover:text-slate-700"
               }`}
             >
-              <tab.icon className={`h-4 w-4 ${activeTab === tab.id ? "text-blue-600" : "text-slate-400"}`} />
+              <tab.icon className={`h-4 w-4 ${activeTab === tab.id ? "text-blue-600" : tab.locked ? "text-slate-300" : "text-slate-400"}`} />
               <span>{tab.label}</span>
+              {tab.locked && <Lock className="w-3 h-3 ml-1" />}
             </button>
           ))}
         </div>
