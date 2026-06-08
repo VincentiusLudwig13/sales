@@ -1,56 +1,43 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { User, Calendar as CalendarIcon, Wallet, CheckCircle2, TrendingUp, Users, MapPin, Store } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
+import { Card, CardContent } from "@/components/ui/card";
+import { TrendingUp, CheckCircle2, Wallet, Store, MapPin, Users, User, Calendar as CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
 
+type DashboardData = {
+  totalSales: number;
+  paidBill: number;
+  unpaidBill: number;
+  outletActive: number;
+  outletVisit: number;
+  totalCall: number;
+};
+
 export default function DashboardPage() {
+  const { data: session } = useSession();
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
   const currentMonth = format(new Date(), "MMMM yyyy");
 
+  useEffect(() => {
+    fetch("/api/dashboard")
+      .then((res) => res.json())
+      .then((d) => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const fmt = (val: number) =>
+    "Rp " + val.toLocaleString("id-ID");
+
   const metrics = [
-    {
-      title: "Total Sales",
-      value: "Rp 15.400.000",
-      icon: TrendingUp,
-      color: "text-blue-600",
-      bgColor: "bg-blue-100",
-    },
-    {
-      title: "Paid Bill",
-      value: "Rp 10.200.000",
-      icon: CheckCircle2,
-      color: "text-emerald-600",
-      bgColor: "bg-emerald-100",
-    },
-    {
-      title: "Unpaid Bill",
-      value: "Rp 5.200.000",
-      icon: Wallet,
-      color: "text-rose-600",
-      bgColor: "bg-rose-100",
-    },
-    {
-      title: "Outlet Active",
-      value: "42",
-      icon: Store,
-      color: "text-indigo-600",
-      bgColor: "bg-indigo-100",
-    },
-    {
-      title: "Outlet Visit",
-      value: "38",
-      icon: MapPin,
-      color: "text-amber-600",
-      bgColor: "bg-amber-100",
-    },
-    {
-      title: "Total Call",
-      value: "64",
-      icon: Users,
-      color: "text-violet-600",
-      bgColor: "bg-violet-100",
-    },
+    { title: "Total Sales", value: loading ? "..." : fmt(data?.totalSales ?? 0), icon: TrendingUp, color: "text-blue-600", bgColor: "bg-blue-100" },
+    { title: "Paid Bill", value: loading ? "..." : fmt(data?.paidBill ?? 0), icon: CheckCircle2, color: "text-emerald-600", bgColor: "bg-emerald-100" },
+    { title: "Unpaid Bill", value: loading ? "..." : fmt(data?.unpaidBill ?? 0), icon: Wallet, color: "text-rose-600", bgColor: "bg-rose-100" },
+    { title: "Outlet Active", value: loading ? "..." : String(data?.outletActive ?? 0), icon: Store, color: "text-indigo-600", bgColor: "bg-indigo-100" },
+    { title: "Outlet Visit", value: loading ? "..." : String(data?.outletVisit ?? 0), icon: MapPin, color: "text-amber-600", bgColor: "bg-amber-100" },
+    { title: "Total Call", value: loading ? "..." : String(data?.totalCall ?? 0), icon: Users, color: "text-violet-600", bgColor: "bg-violet-100" },
   ];
 
   return (
@@ -64,7 +51,9 @@ export default function DashboardPage() {
             </div>
             <div>
               <p className="text-sm font-medium text-slate-500">Welcome back,</p>
-              <h2 className="text-xl font-bold text-slate-900">Mr. XYZ</h2>
+              <h2 className="text-xl font-bold text-slate-900">
+                {session?.user?.name ?? "Loading..."}
+              </h2>
             </div>
           </div>
           <button className="flex items-center justify-center h-10 w-10 rounded-full bg-slate-50 border border-slate-200 text-slate-600 hover:bg-slate-100 transition-colors">

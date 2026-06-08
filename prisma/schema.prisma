@@ -1,13 +1,253 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider = "prisma-client"
-  output   = "../lib/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// User role (SALESMAN or ADMIN)
+
+// User (Salesman or Admin)
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String   // Hashed password
+  name      String
+  role      String   @default("SALESMAN")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  loadingReports   LoadingReport[]
+  posmReports      PosmLoadingReport[]
+  visits           OutletVisit[]
+  orders           Order[]
+  settlements      PaymentSettlement[]
+}
+
+// Product catalog
+model Product {
+  id        String   @id @default(cuid())
+  name      String
+  price     Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  loadingItems LoadingItem[]
+  orderItems   OrderItem[]
+  stockChecks  StockCheck[]
+}
+
+// POSM catalog
+model Posm {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  loadingItems PosmLoadingItem[]
+  checks       PosmCheck[]
+}
+
+// Customer / Outlet
+model Outlet {
+  id        String   @id @default(cuid())
+  name      String
+  picName   String
+  picPhone  String
+  latitude  Float?
+  longitude Float?
+  photoUrl  String?
+  topTerm   String   @default("COD") // e.g., "COD", "3 Days"
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  visits    OutletVisit[]
+  orders    Order[]
+  bills     Bill[]
+}
+
+// ---------------------------------------------------------
+// DAILY LOADING REPORTS (The Checkpoint)
+// ---------------------------------------------------------
+
+// Daily Product Loading Report
+model LoadingReport {
+  id        String         @id @default(cuid())
+  date      DateTime       @default(now())
+  status    String         @default("DRAFT")
+  totalValue Float         @default(0)
+  
+  userId    String
+  user      User           @relation(fields: [userId], references: [id])
+  
+  items     LoadingItem[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, date])
+}
+
+model LoadingItem {
+  id        String        @id @default(cuid())
+  qty       Int
+  value     Float
+  
+  reportId  String
+  report    LoadingReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  
+  productId String
+  product   Product       @relation(fields: [productId], references: [id])
+}
+
+// Daily POSM Loading Report
+model PosmLoadingReport {
+  id        String         @id @default(cuid())
+  date      DateTime       @default(now())
+  status    String         @default("DRAFT")
+  
+  userId    String
+  user      User           @relation(fields: [userId], references: [id])
+  
+  items     PosmLoadingItem[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, date])
+}
+
+model PosmLoadingItem {
+  id        String            @id @default(cuid())
+  qty       Int
+  
+  reportId  String
+  report    PosmLoadingReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  
+  posmId    String
+  posm      Posm              @relation(fields: [posmId], references: [id])
+}
+
+// ---------------------------------------------------------
+// OUTLET VISITS & CHECKS
+// ---------------------------------------------------------
+
+model OutletVisit {
+  id        String   @id @default(cuid())
+  date      DateTime @default(now())
+  
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  
+  stockChecks StockCheck[]
+  posmChecks  PosmCheck[]
+  
+  createdAt DateTime @default(now())
+}
+
+model StockCheck {
+  id          String      @id @default(cuid())
+  qty         Int
+  expiryDate  DateTime?
+  
+  visitId     String
+  visit       OutletVisit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  
+  productId   String
+  product     Product     @relation(fields: [productId], references: [id])
+}
+
+model PosmCheck {
+  id          String      @id @default(cuid())
+  qty         Int
+  
+  visitId     String
+  visit       OutletVisit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  
+  posmId      String
+  posm        Posm        @relation(fields: [posmId], references: [id])
+}
+
+// ---------------------------------------------------------
+// ORDERS & BILLING
+// ---------------------------------------------------------
+
+model Order {
+  id          String   @id @default(cuid())
+  date        DateTime @default(now())
+  grossSales  Float
+  discount    Float    @default(0)
+  nettSales   Float
+  topTerm     String
+  photoUrl    String?  // Receipt/nota photo
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  
+  outletId    String
+  outlet      Outlet   @relation(fields: [outletId], references: [id])
+  
+  items       OrderItem[]
+  bill        Bill?    // An order generates one bill
+  
+  createdAt   DateTime @default(now())
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  qty         Int
+  grossSales  Float
+  discount    Float    @default(0)
+  nettSales   Float
+  
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+}
+
+model Bill {
+  id          String       @id @default(cuid())
+  date        DateTime     @default(now())
+  value       Float
+  settled     Float        @default(0)
+  outstanding Float
+  status      String       @default("NON_DUE")
+  
+  outletId    String
+  outlet      Outlet       @relation(fields: [outletId], references: [id])
+  
+  orderId     String       @unique
+  order       Order        @relation(fields: [orderId], references: [id])
+  
+  settlements PaymentSettlement[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model PaymentSettlement {
+  id          String         @id @default(cuid())
+  amount      Float
+  status      String         @default("PENDING")
+  
+  userId      String
+  user        User           @relation(fields: [userId], references: [id])
+  
+  billId      String
+  bill        Bill           @relation(fields: [billId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
