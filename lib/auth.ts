@@ -3,6 +3,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { prisma } from "@/lib/prisma";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  secret: process.env.AUTH_SECRET,
   providers: [
     CredentialsProvider({
       name: "Credentials",
@@ -13,28 +14,33 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       async authorize(credentials) {
         if (!credentials?.username || !credentials?.password) return null;
 
-        const user = await prisma.user.findUnique({
-          where: { username: credentials.username as string },
-        });
-
-        // For testing, if user doesn't exist, we create one automatically so you can login!
-        if (!user) {
-          const newUser = await prisma.user.create({
-            data: {
-              username: credentials.username as string,
-              password: credentials.password as string, // WARNING: In production, hash this!
-              name: "Test Salesman",
-            },
+        try {
+          const user = await prisma.user.findUnique({
+            where: { username: credentials.username as string },
           });
-          return { id: newUser.id, name: newUser.name, email: newUser.username };
-        }
 
-        // WARNING: In production, use bcrypt.compare
-        if (user.password === credentials.password) {
-          return { id: user.id, name: user.name, email: user.username };
-        }
+          // For testing, if user doesn't exist, we create one automatically so you can login!
+          if (!user) {
+            const newUser = await prisma.user.create({
+              data: {
+                username: credentials.username as string,
+                password: credentials.password as string, // WARNING: In production, hash this!
+                name: "Test Salesman",
+              },
+            });
+            return { id: newUser.id, name: newUser.name, email: newUser.username };
+          }
 
-        return null;
+          // WARNING: In production, use bcrypt.compare
+          if (user.password === credentials.password) {
+            return { id: user.id, name: user.name, email: user.username };
+          }
+
+          return null;
+        } catch (error) {
+          console.error("[Auth] Database error during authorize:", error);
+          return null;
+        }
       },
     }),
   ],
