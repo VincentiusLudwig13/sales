@@ -1,43 +1,80 @@
-# Salesman Tools Project
+# Salesman Tools
 
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+A mobile-first Progressive Web App (PWA) built with **Next.js** for field sales teams. 
 
-## 📄 Project Documentation
+> 📖 For deep technical reference (schema, API flows, glossary, deployment), see **[DOCUMENTATION.md](./DOCUMENTATION.md)**.
 
-For a detailed guide on the project stack, directory structure, domain glossary, step-by-step program & API flows, and suggestions for improvement, please refer to the **[DOCUMENTATION.md](file:///C:/Users/15997666/Documents/internship/sales/sales/DOCUMENTATION.md)** file.
+---
 
-## Getting Started
+## 🔄 End-to-End App Flow
 
-First, run the development server:
+The application handles the complete daily cycle of a field salesman and the corresponding approval actions by the back-office admin.
 
+### High-Level Architecture
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```mermaid
+graph TD
+    Salesman[Salesman Mobile PWA] <-->|API Calls| NextJS[Next.js Server]
+    Admin[Admin Desktop Portal] <-->|API Calls| NextJS
+    NextJS <-->|Prisma ORM| Database[(PostgreSQL/SQLite)]
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Daily Operational Flow
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Salesman as Salesman (Mobile)
+    actor Admin as Admin (Desktop)
+    participant App as System
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+    %% Morning Phase
+    Note over Salesman, App: 🌅 Morning: Loading Prep
+    Salesman->>App: Submits Product & POSM Loading Reports
+    App-->>Salesman: Status: PENDING (Route is Locked 🔒)
+    Admin->>App: Reviews & Approves Loading Reports
+    App-->>Salesman: Status: APPROVED (Route Unlocks 🔓)
 
-## Learn More
+    %% Field Operations
+    Note over Salesman, App: 🚙 Mid-Day: Field Visits
+    loop For each Outlet in Route
+        Salesman->>App: Checks GPS Distance (< 50m)
+        App-->>Salesman: Enables Visit Button
+        
+        Note over Salesman, App: Store Audits
+        Salesman->>App: Performs Stock & POSM Checks
+        
+        Note over Salesman, App: Sales & Collections
+        Salesman->>App: Submits Order (Qty, Discount, Terms)
+        Salesman->>App: Records Returns & Cash Collected
+        
+        Note over App: System calculates FIFO Debt Settlement
+    end
 
-To learn more about Next.js, take a look at the following resources:
+    %% Back Office Settlement
+    Note over Admin, App: 🏢 Back-Office: Finance
+    Admin->>App: Reviews Pending Payment Settlements
+    Admin->>App: Approves Payments (Updates Ledger)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+    %% End of Day
+    Note over Salesman, App: 🌙 End of Day
+    Salesman->>App: Clicks "Close Today's Route"
+    App-->>Salesman: Route Locked for the Day
+```
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 🚀 Quick Start
 
-## Deploy on Vercel
+```bash
+# Install dependencies
+npm install
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+# Setup local database & seed data
+npx prisma migrate dev
+npx prisma db seed
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+# Run the dev server
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) to view the app.

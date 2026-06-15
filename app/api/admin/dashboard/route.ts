@@ -133,6 +133,56 @@ export async function GET() {
       };
     });
 
+    // 4. MTD Sales Data
+    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const mtdOrders = await prisma.order.findMany({
+      where: {
+        date: { gte: startOfMonth }
+      },
+      select: {
+        date: true,
+        nettSales: true
+      },
+      orderBy: { date: "asc" }
+    });
+
+    // 5. Active vs Inactive Stores Ratio (active if at least 1 order in the last 7 days)
+    const sevenDaysAgo = new Date(today);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const activeOutlets = await prisma.outlet.findMany({
+      where: {
+        orders: {
+          some: {
+            date: { gte: sevenDaysAgo }
+          }
+        }
+      },
+      select: { id: true }
+    });
+    const activeOutletsCount = activeOutlets.length;
+    const inactiveOutletsCount = Math.max(0, totalOutletsCount - activeOutletsCount);
+
+    // 6. All Bills with settlements & order info
+    const allBills = await prisma.bill.findMany({
+      include: {
+        outlet: { select: { id: true, name: true } },
+        order: {
+          select: {
+            id: true,
+            date: true,
+            nettSales: true,
+          }
+        },
+        settlements: {
+          include: {
+            user: { select: { name: true } }
+          },
+          orderBy: { createdAt: "desc" }
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
     return NextResponse.json({
       metrics: {
         totalSales,
@@ -148,7 +198,14 @@ export async function GET() {
       pendingPosmReports,
       pendingBills,
       pendingDirectSettlements,
-      salesmenStatuses
+      salesmenStatuses,
+      mtdOrders,
+      storeActivity: {
+        active: activeOutletsCount,
+        inactive: inactiveOutletsCount,
+        total: totalOutletsCount
+      },
+      allBills
     });
   } catch (error) {
     console.error("[Admin Dashboard API] error:", error);

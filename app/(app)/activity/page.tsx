@@ -147,27 +147,6 @@ export default function ActivityPage() {
           </div>
         </div>
       )}
-
-      {/* DEV TEST BUTTON — Remove before production */}
-      {!isValidated && !isClosed && (
-        <div className="px-4 pt-3">
-          <button
-            onClick={async () => {
-              const res = await fetch("/api/dev/approve-all", { method: "POST" });
-              const data = await res.json();
-              if (res.ok && (data.productUpdated > 0 || data.posmUpdated > 0)) {
-                fetchStatus();
-              } else {
-                alert("Nothing to approve yet — submit Product and POSM loading first!");
-              }
-            }}
-            className="w-full py-2.5 px-4 rounded-xl border-2 border-dashed border-amber-400 text-amber-700 bg-amber-50 text-sm font-semibold hover:bg-amber-100 transition-colors flex items-center justify-center gap-2"
-          >
-            ⚡ [TEST ONLY] Approve Product &amp; POSM Loading
-          </button>
-        </div>
-      )}
-
       <div className="flex-1 p-4">
         {activeTab === "product" && <ProductLoadingTab status={loadingStatus.product} loadedItems={loadedProductItems} onSubmitted={fetchStatus} />}
         {activeTab === "posm" && <PosmLoadingTab status={loadingStatus.posm} loadedItems={loadedPosmItems} onSubmitted={fetchStatus} />}
@@ -1061,12 +1040,9 @@ function DailyActivityTab() {
               // Calculate distance to current outlet if location exists
               let distance = -1;
               let isWithinRadius = false;
-              const bypassGeofence = process.env.NEXT_PUBLIC_BYPASS_GEOFENCE === "true";
               if (userLocation && outlet.latitude && outlet.longitude) {
                 distance = getDistanceInMeters(userLocation.lat, userLocation.lng, outlet.latitude, outlet.longitude);
-                isWithinRadius = distance <= 50 || bypassGeofence;
-              } else if (bypassGeofence) {
-                isWithinRadius = true;
+                isWithinRadius = distance <= 50;
               }
 
               return (

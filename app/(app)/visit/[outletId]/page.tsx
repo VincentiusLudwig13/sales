@@ -581,8 +581,8 @@ interface OrderTabProps {
 
 interface SelectedItem {
   productId: string;
-  qty: number;
-  discount: number;
+  qty: number | string;
+  discount: number | string;
 }
 
 function OrderTab({ products, outlet, refreshOutlet, isOffline }: OrderTabProps) {
@@ -609,10 +609,11 @@ function OrderTab({ products, outlet, refreshOutlet, isOffline }: OrderTabProps)
   const handleItemChange = (index: number, key: keyof SelectedItem, val: string | number) => {
     setSelectedItems((prev) => {
       const copy = [...prev];
-      if (key === "qty") {
-        copy[index] = { ...copy[index], qty: val === "" ? 0 : Math.max(0, Number(val)) };
-      } else if (key === "discount") {
-        copy[index] = { ...copy[index], discount: val === "" ? 0 : Math.max(0, Number(val)) };
+      if (key === "qty" || key === "discount") {
+        const strVal = String(val);
+        // Only allow empty string or digit-only strings
+        if (strVal !== "" && !/^\d*$/.test(strVal)) return copy;
+        copy[index] = { ...copy[index], [key]: strVal };
       } else if (key === "productId") {
         copy[index] = { ...copy[index], productId: String(val) };
       }
@@ -624,8 +625,10 @@ function OrderTab({ products, outlet, refreshOutlet, isOffline }: OrderTabProps)
   const calculatedItems = selectedItems.map((item) => {
     const product = products.find((p) => p.id === item.productId);
     const price = product?.price || 0;
-    const grossSales = price * item.qty;
-    const nettSales = Math.max(0, grossSales - item.discount);
+    const q = item.qty === "" ? 0 : Number(item.qty);
+    const d = item.discount === "" ? 0 : Number(item.discount);
+    const grossSales = price * q;
+    const nettSales = Math.max(0, grossSales - d);
     return {
       ...item,
       name: product?.name || "",
@@ -635,7 +638,7 @@ function OrderTab({ products, outlet, refreshOutlet, isOffline }: OrderTabProps)
   });
 
   const totalGross = calculatedItems.reduce((sum, i) => sum + i.grossSales, 0);
-  const totalDiscount = calculatedItems.reduce((sum, i) => sum + i.discount, 0);
+  const totalDiscount = calculatedItems.reduce((sum, i) => sum + (i.discount === "" ? 0 : Number(i.discount)), 0);
   const totalNett = calculatedItems.reduce((sum, i) => sum + i.nettSales, 0);
 
 
@@ -660,7 +663,7 @@ function OrderTab({ products, outlet, refreshOutlet, isOffline }: OrderTabProps)
   };
 
   // Return states
-  const [returnItems, setReturnItems] = useState<{ productId: string; qty: number; value: number }[]>([]);
+  const [returnItems, setReturnItems] = useState<{ productId: string; qty: number | string; value: number }[]>([]);
   const [collectionInput, setCollectionInput] = useState<string>("0");
 
   useEffect(() => {
@@ -706,18 +709,22 @@ function OrderTab({ products, outlet, refreshOutlet, isOffline }: OrderTabProps)
       const copy = [...prev];
       if (key === "productId") {
         const product = products.find((p) => p.id === val);
+        const q = copy[index].qty === "" ? 0 : Number(copy[index].qty);
         copy[index] = {
           ...copy[index],
           productId: String(val),
-          value: (product?.price || 0) * copy[index].qty
+          value: (product?.price || 0) * q
         };
       } else if (key === "qty") {
+        const strVal = String(val);
+        // Only allow empty string or digit-only strings
+        if (strVal !== "" && !/^\d*$/.test(strVal)) return copy;
         const product = products.find((p) => p.id === copy[index].productId);
-        const inputQty = val === "" ? 0 : Math.max(0, Number(val));
+        const q = strVal === "" ? 0 : Math.max(0, Number(strVal));
         copy[index] = {
           ...copy[index],
-          qty: inputQty,
-          value: (product?.price || 0) * inputQty
+          qty: strVal,
+          value: (product?.price || 0) * q
         };
       }
       return copy;
@@ -736,10 +743,10 @@ function OrderTab({ products, outlet, refreshOutlet, isOffline }: OrderTabProps)
     if (!hasOrderItems && !hasReturnItems && !hasCollection) {
       return alert("Please enter an order, add returns, or enter a collection amount before submitting.");
     }
-    if (hasOrderItems && calculatedItems.some((ci) => ci.qty <= 0)) {
+    if (hasOrderItems && calculatedItems.some((ci) => (ci.qty === "" ? 0 : Number(ci.qty)) <= 0)) {
       return alert("Product quantities must be at least 1.");
     }
-    if (hasReturnItems && returnItems.some((ri) => ri.qty <= 0)) {
+    if (hasReturnItems && returnItems.some((ri) => (ri.qty === "" ? 0 : Number(ri.qty)) <= 0)) {
       return alert("Return product quantities must be at least 1.");
     }
     if (!photoUrl) {
@@ -751,14 +758,14 @@ function OrderTab({ products, outlet, refreshOutlet, isOffline }: OrderTabProps)
     const orderData = {
       items: calculatedItems.map((ci) => ({
         productId: ci.productId,
-        qty: ci.qty,
+        qty: ci.qty === "" ? 0 : Number(ci.qty),
         grossSales: ci.grossSales,
-        discount: ci.discount,
+        discount: ci.discount === "" ? 0 : Number(ci.discount),
         nettSales: ci.nettSales
       })),
       returns: returnItems.map((ri) => ({
         productId: ri.productId,
-        qty: ri.qty,
+        qty: ri.qty === "" ? 0 : Number(ri.qty),
         value: ri.value
       })),
       collectionAmount: totalCollection,
@@ -940,9 +947,10 @@ function OrderTab({ products, outlet, refreshOutlet, isOffline }: OrderTabProps)
                 <div>
                   <label className="text-xs font-medium text-slate-500 mb-1 block">Qty</label>
                   <Input 
-                    type="number" 
-                    value={item.qty} 
-                    onChange={(e) => handleItemChange(idx, "qty", parseInt(e.target.value) || 1)}
+                    type="text"
+                    inputMode="numeric"
+                    value={item.qty}
+                    onChange={(e) => handleItemChange(idx, "qty", e.target.value)}
                     className="h-10 bg-slate-50 border-slate-200" 
                   />
                 </div>
@@ -952,9 +960,10 @@ function OrderTab({ products, outlet, refreshOutlet, isOffline }: OrderTabProps)
                 <div>
                   <label className="text-xs font-medium text-slate-500 mb-1 block">Discount (Rp)</label>
                   <Input 
-                    type="number" 
-                    value={item.discount} 
-                    onChange={(e) => handleItemChange(idx, "discount", parseInt(e.target.value) || 0)}
+                    type="text"
+                    inputMode="numeric"
+                    value={item.discount}
+                    onChange={(e) => handleItemChange(idx, "discount", e.target.value)}
                     className="h-10 bg-slate-50 border-slate-200" 
                   />
                 </div>
@@ -1022,9 +1031,10 @@ function OrderTab({ products, outlet, refreshOutlet, isOffline }: OrderTabProps)
                        <div>
                          <label className="text-[10px] font-bold text-slate-400 mb-1 block">Qty</label>
                          <Input 
-                           type="number" 
+                           type="text" 
+                           inputMode="numeric"
                            value={item.qty} 
-                           onChange={(e) => handleReturnItemChange(idx, "qty", parseInt(e.target.value) || 1)}
+                           onChange={(e) => handleReturnItemChange(idx, "qty", e.target.value)}
                            className="h-8 bg-white border-slate-200 text-xs" 
                          />
                        </div>

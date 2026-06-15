@@ -17,7 +17,11 @@ import {
   ChevronDown,
   ShieldAlert,
   FileText,
-  CircleCheck
+  CircleCheck,
+  Search,
+  Filter,
+  TrendingDown,
+  Activity
 } from "lucide-react";
 
 interface ProductItem {
@@ -121,6 +125,46 @@ interface SalesmanStatus {
   todaySales: number;
 }
 
+interface MtdOrder {
+  date: string;
+  nettSales: number;
+}
+
+interface StoreActivity {
+  active: number;
+  inactive: number;
+  total: number;
+}
+
+interface BillSettlement {
+  id: string;
+  amount: number;
+  status: string;
+  createdAt: string;
+  user: {
+    name: string;
+  };
+}
+
+interface AllBill {
+  id: string;
+  date: string;
+  value: number;
+  settled: number;
+  outstanding: number;
+  status: string;
+  outlet: {
+    id: string;
+    name: string;
+  };
+  order: {
+    id: string;
+    date: string;
+    nettSales: number;
+  } | null;
+  settlements: BillSettlement[];
+}
+
 interface DashboardData {
   metrics: {
     totalSales: number;
@@ -137,18 +181,29 @@ interface DashboardData {
   pendingBills: PendingBill[];
   pendingDirectSettlements: PendingDirectSettlement[];
   salesmenStatuses: SalesmanStatus[];
+  mtdOrders: MtdOrder[];
+  storeActivity: StoreActivity;
+  allBills: AllBill[];
 }
 
 export default function AdminDashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState<"loading" | "payments">("loading");
+  const [activeTab, setActiveTab] = useState<"loading" | "payments" | "analytics">("loading");
   const [loadingSubTab, setLoadingSubTab] = useState<"product" | "posm">("product");
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   // Expanded list rows for viewing item details
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
+
+  // Ledger state variables
+  const [ledgerSearch, setLedgerSearch] = useState("");
+  const [ledgerStatus, setLedgerStatus] = useState<"ALL" | "PAID" | "PARTIAL" | "UNPAID">("ALL");
+  const [expandedLedgerBill, setExpandedLedgerBill] = useState<string | null>(null);
+
+  // Payments tab search state
+  const [paymentsSearch, setPaymentsSearch] = useState("");
 
   // Per-bill: which collection-only PaymentSettlement the admin has selected
   const [selectedCollectionMap, setSelectedCollectionMap] = useState<Record<string, string>>({});
@@ -415,10 +470,12 @@ export default function AdminDashboardPage() {
 
       {/* Main Workspace split */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left: Approvals Board (8 cols) */}
-        <div className="lg:col-span-8 space-y-4">
+        {/* Left: Approvals Board / Analytics Panel */}
+        <div className={activeTab === "analytics" ? "lg:col-span-12 space-y-6" : "lg:col-span-8 space-y-4"}>
           <div className="flex items-center justify-between border-b border-slate-900 pb-3">
-            <h3 className="text-lg font-black text-white">Approvals Workbench</h3>
+            <h3 className="text-lg font-black text-white">
+              {activeTab === "analytics" ? "Ledger & Analytics Console" : "Approvals Workbench"}
+            </h3>
             
             {/* Approvals tab selectors */}
             <div className="flex bg-slate-900/60 p-1 rounded-xl border border-slate-800">
@@ -430,10 +487,10 @@ export default function AdminDashboardPage() {
                 className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${
                   activeTab === "loading"
                     ? "bg-indigo-600 text-white shadow-sm"
-                    : "text-slate-400 hover:text-slate-200"
+                    : "text-slate-400 hover:text-slate-205"
                 }`}
               >
-                Loading Reports ({metrics.pendingProductReportsCount + metrics.pendingPosmReportsCount})
+                Loading ({metrics.pendingProductReportsCount + metrics.pendingPosmReportsCount})
               </button>
               <button
                 onClick={() => {
@@ -443,10 +500,23 @@ export default function AdminDashboardPage() {
                 className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${
                   activeTab === "payments"
                     ? "bg-indigo-600 text-white shadow-sm"
-                    : "text-slate-400 hover:text-slate-200"
+                    : "text-slate-400 hover:text-slate-205"
                 }`}
               >
                 Payments ({metrics.pendingSettlementsCount})
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab("analytics");
+                  setExpandedRow(null);
+                }}
+                className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${
+                  activeTab === "analytics"
+                    ? "bg-indigo-600 text-white shadow-sm"
+                    : "text-slate-400 hover:text-slate-205"
+                }`}
+              >
+                Analytics & Ledger
               </button>
             </div>
           </div>
@@ -660,12 +730,33 @@ export default function AdminDashboardPage() {
           {/* Payment settlements queue — outstanding order bills */}
           {activeTab === "payments" && (
             <div className="space-y-3">
-              {pendingBills.length === 0 ? (
-                <div className="text-center py-12 bg-slate-900/40 rounded-3xl border border-slate-900 border-dashed text-slate-500 text-xs">
-                  No outstanding order bills to settle.
-                </div>
-              ) : (
-                pendingBills.map((bill) => {
+              {/* Search bar for pending bills */}
+              <div className="relative mb-4">
+                <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search outstanding bills by ID or Outlet Name..."
+                  value={paymentsSearch}
+                  onChange={(e) => setPaymentsSearch(e.target.value)}
+                  className="bg-slate-950/60 border border-slate-800 text-xs text-white rounded-xl pl-9 pr-4 py-2 w-full focus:outline-none focus:border-indigo-500 transition-colors placeholder:text-slate-600"
+                />
+              </div>
+
+              {(() => {
+                const filteredPendingBills = pendingBills.filter((bill) =>
+                  bill.outlet.name.toLowerCase().includes(paymentsSearch.toLowerCase()) ||
+                  bill.id.toLowerCase().includes(paymentsSearch.toLowerCase())
+                );
+
+                if (filteredPendingBills.length === 0) {
+                  return (
+                    <div className="text-center py-12 bg-slate-900/40 rounded-3xl border border-slate-900 border-dashed text-slate-550 text-xs">
+                      {paymentsSearch ? "No matching outstanding bills found." : "No outstanding order bills to settle."}
+                    </div>
+                  );
+                }
+
+                return filteredPendingBills.map((bill) => {
                   const isExpanded = expandedRow === bill.id;
                   const collections = outletCollectionsMap[bill.id] ?? [];
                   const selectedCollectionId = selectedCollectionMap[bill.id];
@@ -687,7 +778,7 @@ export default function AdminDashboardPage() {
                           <div className="min-w-0">
                             <p className="text-sm font-bold text-slate-100">{bill.outlet.name}</p>
                             <p className="text-[10px] text-slate-400 mt-0.5">
-                              Bill #{bill.id.slice(-8).toUpperCase()}
+                              Bill #{bill.id.substring(0, 8)}
                               {bill.order?.topTerm ? ` · ${bill.order.topTerm}` : ""}
                               {" · "}{new Date(bill.date).toLocaleDateString("id-ID")}
                             </p>
@@ -848,7 +939,7 @@ export default function AdminDashboardPage() {
                             <div className="text-xs space-y-1.5 text-slate-500">
                               <div className="flex justify-between">
                                 <span>Bill ID:</span>
-                                <span className="text-slate-400 font-bold">#{bill.id.slice(-8).toUpperCase()}</span>
+                                <span className="text-slate-400 font-bold">#{bill.id.substring(0, 8)}</span>
                               </div>
                               <div className="flex justify-between">
                                 <span>Invoice Value:</span>
@@ -870,14 +961,436 @@ export default function AdminDashboardPage() {
                       )}
                     </Card>
                   );
-                })
-              )}
+                });
+              })()}
+            </div>
+          )}
+
+          {activeTab === "analytics" && (
+            <div className="space-y-8 animate-in fade-in duration-300">
+              {/* Analytics Header Metrics */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <Card className="bg-slate-900 border-slate-800/80 rounded-2xl p-5 shadow-sm">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">MTD Sales Performance</p>
+                      <h3 className="text-xl font-extrabold text-white mt-1.5">
+                        Rp {data.mtdOrders?.reduce((sum, o) => sum + o.nettSales, 0).toLocaleString("id-ID") ?? 0}
+                      </h3>
+                      <p className="text-[10px] text-indigo-400 mt-1.5 flex items-center gap-1 font-semibold">
+                        <TrendingUp className="w-3.5 h-3.5" />
+                        Month-to-Date Cumulative Revenue
+                      </p>
+                    </div>
+                    <div className="h-10 w-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400 border border-indigo-500/20 shrink-0">
+                      <TrendingUp className="h-4.5 w-4.5" />
+                    </div>
+                  </div>
+                </Card>
+
+                <Card className="bg-slate-900 border-slate-800/80 rounded-2xl p-5 shadow-sm">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Active Store Ratio</p>
+                      <h3 className="text-xl font-extrabold text-white mt-1.5">
+                        {data.storeActivity?.active ?? 0} / {data.storeActivity?.total ?? 0}
+                      </h3>
+                      <p className="text-[10px] text-emerald-400 mt-1.5 flex items-center gap-1 font-semibold">
+                        <Activity className="w-3.5 h-3.5" />
+                        {data.storeActivity?.total > 0 ? Math.round(((data.storeActivity?.active ?? 0) / data.storeActivity?.total) * 100) : 0}% stores active this week
+                      </p>
+                    </div>
+                    <div className="h-10 w-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400 border border-emerald-500/20 shrink-0">
+                      <Store className="h-4.5 w-4.5" />
+                    </div>
+                  </div>
+                </Card>
+
+                <Card className="bg-slate-900 border-slate-800/80 rounded-2xl p-5 shadow-sm">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Ledger Invoice Volume</p>
+                      <h3 className="text-xl font-extrabold text-white mt-1.5">
+                        Rp {data.allBills?.reduce((sum, b) => sum + b.value, 0).toLocaleString("id-ID") ?? 0}
+                      </h3>
+                      <p className="text-[10px] text-slate-400 mt-1.5 flex items-center gap-1 font-semibold">
+                        <Coins className="w-3.5 h-3.5 text-slate-500" />
+                        Outstanding: Rp {data.allBills?.reduce((sum, b) => sum + b.outstanding, 0).toLocaleString("id-ID") ?? 0}
+                      </p>
+                    </div>
+                    <div className="h-10 w-10 bg-slate-800 rounded-xl flex items-center justify-center text-slate-400 border border-slate-700 shrink-0">
+                      <FileText className="h-4.5 w-4.5" />
+                    </div>
+                  </div>
+                </Card>
+              </div>
+
+              {/* Charts Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Cumulative/Daily MTD Sales Area Chart */}
+                <Card className="bg-slate-900 border-slate-800/80 rounded-3xl p-6 shadow-md lg:col-span-2 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider">MTD Sales Trend</h3>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Daily sales distribution for the current calendar month</p>
+                    </div>
+                    <span className="text-[10px] font-bold bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-full uppercase">
+                      Current Month
+                    </span>
+                  </div>
+
+                  <div className="w-full relative h-[180px] bg-slate-950/40 rounded-2xl border border-slate-900 overflow-hidden flex items-end">
+                    {/* SVG Render */}
+                    {(() => {
+                      const now = new Date();
+                      const currentYear = now.getFullYear();
+                      const currentMonth = now.getMonth();
+                      const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+                      
+                      const dailyData = Array.from({ length: daysInMonth }, (_, i) => {
+                        const day = i + 1;
+                        return { day, amount: 0 };
+                      });
+                      
+                      data.mtdOrders?.forEach((o) => {
+                        const oDate = new Date(o.date);
+                        if (oDate.getFullYear() === currentYear && oDate.getMonth() === currentMonth) {
+                          const day = oDate.getDate();
+                          if (dailyData[day - 1]) {
+                            dailyData[day - 1].amount += o.nettSales;
+                          }
+                        }
+                      });
+
+                      const maxVal = Math.max(...dailyData.map((d) => d.amount), 500000);
+                      const width = 600;
+                      const height = 140;
+                      const padX = 30;
+                      const padY = 15;
+
+                      const points = dailyData.map((d, index) => {
+                        const x = padX + (index / (daysInMonth - 1)) * (width - padX * 2);
+                        const y = height - padY - (d.amount / maxVal) * (height - padY * 2);
+                        return { x, y, ...d };
+                      });
+
+                      const pathStr = points.length > 0
+                        ? `M ${points[0].x} ${points[0].y} ` + points.slice(1).map((p) => `L ${p.x} ${p.y}`).join(" ")
+                        : "";
+                      
+                      const areaStr = points.length > 0
+                        ? `${pathStr} L ${points[points.length - 1].x} ${height - padY} L ${points[0].x} ${height - padY} Z`
+                        : "";
+
+                      return (
+                        <svg className="w-full h-full" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+                          <defs>
+                            <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#6366f1" stopOpacity="0.4" />
+                              <stop offset="100%" stopColor="#6366f1" stopOpacity="0.0" />
+                            </linearGradient>
+                          </defs>
+
+                          {/* Grid Lines */}
+                          <line x1={padX} y1={padY} x2={width - padX} y2={padY} stroke="#1e293b" strokeDasharray="3,3" />
+                          <line x1={padX} y1={height / 2} x2={width - padX} y2={height / 2} stroke="#1e293b" strokeDasharray="3,3" />
+                          <line x1={padX} y1={height - padY} x2={width - padX} y2={height - padY} stroke="#334155" />
+
+                          {/* Area Path */}
+                          {areaStr && <path d={areaStr} fill="url(#salesGrad)" />}
+
+                          {/* Line Path */}
+                          {pathStr && <path d={pathStr} fill="none" stroke="#6366f1" strokeWidth="2.5" strokeLinecap="round" />}
+
+                          {/* Interactive/Highlight Dots */}
+                          {points.map((p) => {
+                            if (p.amount <= 0) return null;
+                            return (
+                              <g key={p.day} className="group/dot cursor-pointer">
+                                <circle cx={p.x} cy={p.y} r="3.5" fill="#6366f1" stroke="#ffffff" strokeWidth="1" />
+                                <circle cx={p.x} cy={p.y} r="8" fill="#6366f1" fillOpacity="0" className="hover:fill-opacity-10 transition-all" />
+                                <title>
+                                  Day {p.day}: Rp {p.amount.toLocaleString("id-ID")}
+                                </title>
+                              </g>
+                            );
+                          })}
+
+                          {/* X-Axis Labels */}
+                          <text x={padX} y={height - 2} fill="#64748b" fontSize="8" textAnchor="middle">Day 1</text>
+                          <text x={width / 2} y={height - 2} fill="#64748b" fontSize="8" textAnchor="middle">Day {Math.round(daysInMonth / 2)}</text>
+                          <text x={width - padX} y={height - 2} fill="#64748b" fontSize="8" textAnchor="middle">Day {daysInMonth}</text>
+                        </svg>
+                      );
+                    })()}
+                  </div>
+                </Card>
+
+                {/* Active vs Inactive Store Donut Chart */}
+                <Card className="bg-slate-900 border-slate-800/80 rounded-3xl p-6 shadow-md flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Store Activity</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">Active stores placed at least 1 order in the last 7 days</p>
+                  </div>
+
+                  <div className="flex justify-center items-center py-4 relative">
+                    {(() => {
+                      const active = data.storeActivity?.active ?? 0;
+                      const inactive = data.storeActivity?.inactive ?? 0;
+                      const total = data.storeActivity?.total ?? 1;
+                      
+                      const activePct = Math.round((active / total) * 100);
+                      const radius = 35;
+                      const strokeWidth = 8;
+                      const circ = 2 * Math.PI * radius; // ~219.9
+                      const dashArray = circ;
+                      const activeOffset = dashArray - (active / total) * dashArray;
+
+                      return (
+                        <div className="relative flex items-center justify-center h-32 w-32">
+                          <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                            {/* Inactive Base Track (Grey) */}
+                            <circle
+                              cx="50"
+                              cy="50"
+                              r={radius}
+                              fill="transparent"
+                              stroke="#334155"
+                              strokeWidth={strokeWidth}
+                            />
+                            {/* Active segment (Emerald) */}
+                            <circle
+                              cx="50"
+                              cy="50"
+                              r={radius}
+                              fill="transparent"
+                              stroke="#10b981"
+                              strokeWidth={strokeWidth}
+                              strokeDasharray={dashArray}
+                              strokeDashoffset={activeOffset}
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                          <div className="absolute flex flex-col items-center justify-center">
+                            <span className="text-xl font-extrabold text-white">{activePct}%</span>
+                            <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Active</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="space-y-2 text-[10px] font-bold border-t border-slate-800/60 pt-4">
+                    <div className="flex justify-between items-center">
+                      <span className="text-emerald-400 flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+                        Active Outlets
+                      </span>
+                      <span className="text-slate-300">{data.storeActivity?.active ?? 0} stores</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-500 flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-slate-600"></span>
+                        Inactive Outlets
+                      </span>
+                      <span className="text-slate-300">{data.storeActivity?.inactive ?? 0} stores</span>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+
+              {/* Comprehensive Billing and Collections Ledger */}
+              <Card className="bg-slate-900 border-slate-800/80 rounded-3xl p-6 shadow-md">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                  <div>
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Billing Ledger Database</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">Audit log of all orders, invoice settlements, and collection history</p>
+                  </div>
+
+                  {/* Filter & Search Bar */}
+                  <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                    <div className="relative">
+                      <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                      <input
+                        type="text"
+                        placeholder="Search outlet name..."
+                        value={ledgerSearch}
+                        onChange={(e) => setLedgerSearch(e.target.value)}
+                        className="bg-slate-950/60 border border-slate-800 text-xs text-white rounded-xl pl-9 pr-4 py-2 w-full sm:w-56 focus:outline-none focus:border-indigo-500 transition-colors placeholder:text-slate-600"
+                      />
+                    </div>
+                    <div className="flex bg-slate-950/60 p-1 border border-slate-800 rounded-xl">
+                      {(["ALL", "PAID", "PARTIAL", "UNPAID"] as const).map((st) => (
+                        <button
+                          key={st}
+                          onClick={() => setLedgerStatus(st)}
+                          className={`text-[9px] font-bold px-2 py-1 rounded-lg uppercase tracking-wider transition-all ${
+                            ledgerStatus === st
+                              ? "bg-slate-800 text-indigo-400 shadow-sm"
+                              : "text-slate-500 hover:text-slate-400"
+                          }`}
+                        >
+                          {st}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Ledger Table rendering */}
+                <div className="overflow-x-auto">
+                  {(() => {
+                    const filtered = (data.allBills ?? []).filter((b) => {
+                      const matchesSearch =
+                        b.outlet.name.toLowerCase().includes(ledgerSearch.toLowerCase()) ||
+                        b.id.toLowerCase().includes(ledgerSearch.toLowerCase());
+                      
+                      if (!matchesSearch) return false;
+                      if (ledgerStatus === "ALL") return true;
+                      if (ledgerStatus === "PAID") return b.outstanding <= 0.01;
+                      if (ledgerStatus === "PARTIAL") return b.settled > 0 && b.outstanding > 0.01;
+                      if (ledgerStatus === "UNPAID") return b.settled === 0 && b.outstanding > 0.01;
+                      return true;
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="text-center py-12 text-slate-500 text-xs border border-dashed border-slate-800 rounded-2xl bg-slate-950/20">
+                          No matching invoices found in history.
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-800/80 text-slate-500 font-bold uppercase tracking-wider text-[9px] pb-3">
+                            <th className="pb-3 pl-2">Invoice ID</th>
+                            <th className="pb-3">Outlet</th>
+                            <th className="pb-3">Order Date</th>
+                            <th className="pb-3 text-right">Invoice Value</th>
+                            <th className="pb-3 text-right">Paid</th>
+                            <th className="pb-3 text-right">Outstanding</th>
+                            <th className="pb-3 text-center">Status</th>
+                            <th className="pb-3 text-center">History</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filtered.map((b) => {
+                            const isExpanded = expandedLedgerBill === b.id;
+                            const statusColor =
+                              b.outstanding <= 0.01
+                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                : b.settled > 0
+                                ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                                : "bg-rose-500/10 text-rose-400 border-rose-500/20";
+                            
+                            const statusText =
+                              b.outstanding <= 0.01 ? "SETTLED" : b.settled > 0 ? "PARTIAL" : "UNPAID";
+
+                            return (
+                              <React.Fragment key={b.id}>
+                                <tr className="border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors">
+                                  <td className="py-3.5 pl-2 font-mono font-bold text-slate-400">
+                                    #{b.id.substring(0, 8)}
+                                  </td>
+                                  <td className="py-3.5 font-bold text-white">{b.outlet.name}</td>
+                                  <td className="py-3.5 text-slate-400">
+                                    {new Date(b.date).toLocaleDateString("id-ID")}
+                                  </td>
+                                  <td className="py-3.5 text-right font-semibold text-slate-200">
+                                    Rp {b.value.toLocaleString("id-ID")}
+                                  </td>
+                                  <td className="py-3.5 text-right font-semibold text-emerald-500">
+                                    Rp {b.settled.toLocaleString("id-ID")}
+                                  </td>
+                                  <td className="py-3.5 text-right font-extrabold text-amber-500">
+                                    Rp {b.outstanding.toLocaleString("id-ID")}
+                                  </td>
+                                  <td className="py-3.5 text-center">
+                                    <span className={`px-2 py-0.5 rounded text-[8px] font-bold border ${statusColor}`}>
+                                      {statusText}
+                                    </span>
+                                  </td>
+                                  <td className="py-3.5 text-center">
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => setExpandedLedgerBill(isExpanded ? null : b.id)}
+                                      className="h-6 w-6 p-0 text-slate-400 hover:text-white"
+                                    >
+                                      {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                                    </Button>
+                                  </td>
+                                </tr>
+
+                                {isExpanded && (
+                                  <tr>
+                                    <td colSpan={8} className="bg-slate-950/50 border-b border-slate-800/80 px-4 py-4">
+                                      <div className="space-y-3">
+                                        <div className="flex justify-between items-center">
+                                          <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                                            Settlement Audit Logs
+                                          </h4>
+                                          <span className="text-[8px] text-slate-650 font-mono">ID: {b.id}</span>
+                                        </div>
+                                        {b.settlements.length === 0 ? (
+                                          <p className="text-[10px] text-slate-500 italic py-2">
+                                            No collections have been applied to this invoice yet.
+                                          </p>
+                                        ) : (
+                                          <div className="space-y-1.5">
+                                            {b.settlements.map((col) => (
+                                              <div
+                                                key={col.id}
+                                                className="flex justify-between items-center bg-slate-900/40 border border-slate-800 px-3 py-2 rounded-xl text-[10px]"
+                                              >
+                                                <div className="flex items-center gap-2">
+                                                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-500"></span>
+                                                  <span className="text-slate-300 font-semibold">
+                                                    Collector: {col.user.name}
+                                                  </span>
+                                                  <span className="text-slate-600">|</span>
+                                                  <span className="text-slate-500">
+                                                    {new Date(col.createdAt).toLocaleString("id-ID")}
+                                                  </span>
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                  <span className="font-extrabold text-emerald-400">
+                                                    Rp {col.amount.toLocaleString("id-ID")}
+                                                  </span>
+                                                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-extrabold ${
+                                                    col.status === "APPROVED" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                                                    col.status === "REJECTED" ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" :
+                                                    "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                                  }`}>
+                                                    {col.status}
+                                                  </span>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    );
+                  })()}
+                </div>
+              </Card>
             </div>
           )}
         </div>
 
         {/* Right: Salesmen Status Monitor (4 cols) */}
-        <div className="lg:col-span-4 space-y-4">
+        {activeTab !== "analytics" && (
+          <div className="lg:col-span-4 space-y-4">
           <div className="border-b border-slate-900 pb-3">
             <h3 className="text-lg font-black text-white">Salesmen Monitor</h3>
           </div>
@@ -950,6 +1463,7 @@ export default function AdminDashboardPage() {
             )}
           </div>
         </div>
+      )}
       </div>
 
       {/* No modal needed — inline validation is used in the bill cards above */}
