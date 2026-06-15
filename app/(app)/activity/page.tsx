@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Package, ShoppingBasket, Map, ChevronRight, CheckCircle2, Lock, Store, AlertCircle, Loader2, Camera } from "lucide-react";
+import { Package, ShoppingBasket, Map, ChevronRight, CheckCircle2, Lock, Store, AlertCircle, Loader2, Camera, WifiOff, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { getCache, setCache, deleteCache, getAllDrafts, deleteDraft, saveDraft } from "@/lib/offline-db";
 
 import { signOut } from "next-auth/react";
 
@@ -17,11 +18,40 @@ export default function ActivityPage() {
   const [loadedPosmItems, setLoadedPosmItems] = useState<any[]>([]);
   const [statusLoading, setStatusLoading] = useState(true);
 
-  const fetchStatus = () => {
+  const fetchStatus = async () => {
     setStatusLoading(true);
-    fetch("/api/activity/status")
-      .then((res) => res.json())
-      .then((data) => {
+    const offlineCheck = typeof navigator !== "undefined" && !navigator.onLine;
+
+    if (offlineCheck) {
+      try {
+        const cachedStatus = await getCache<any>("activity_status");
+        if (cachedStatus) {
+          if (cachedStatus.isValidated) {
+            setIsValidated(true);
+            setActiveTab("activity");
+          } else {
+            setIsValidated(false);
+          }
+          setIsClosed(cachedStatus.isClosed ?? false);
+          setLoadingStatus({
+            product: cachedStatus.productLoadingStatus ?? "DRAFT",
+            posm: cachedStatus.posmLoadingStatus ?? "DRAFT",
+          });
+          setLoadedProductItems(cachedStatus.productItems ?? []);
+          setLoadedPosmItems(cachedStatus.posmItems ?? []);
+        }
+      } catch (err) {
+        console.error("Failed to load cached status:", err);
+      } finally {
+        setStatusLoading(false);
+      }
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/activity/status");
+      if (res.ok) {
+        const data = await res.json();
         if (data.isValidated) {
           setIsValidated(true);
           setActiveTab("activity");
@@ -35,9 +65,30 @@ export default function ActivityPage() {
         });
         setLoadedProductItems(data.productItems ?? []);
         setLoadedPosmItems(data.posmItems ?? []);
-        setStatusLoading(false);
-      })
-      .catch(() => setStatusLoading(false));
+        
+        await setCache("activity_status", data);
+      }
+    } catch (err) {
+      console.warn("Fetch status failed, trying cache:", err);
+      const cachedStatus = await getCache<any>("activity_status");
+      if (cachedStatus) {
+        if (cachedStatus.isValidated) {
+          setIsValidated(true);
+          setActiveTab("activity");
+        } else {
+          setIsValidated(false);
+        }
+        setIsClosed(cachedStatus.isClosed ?? false);
+        setLoadingStatus({
+          product: cachedStatus.productLoadingStatus ?? "DRAFT",
+          posm: cachedStatus.posmLoadingStatus ?? "DRAFT",
+        });
+        setLoadedProductItems(cachedStatus.productItems ?? []);
+        setLoadedPosmItems(cachedStatus.posmItems ?? []);
+      }
+    } finally {
+      setStatusLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -132,6 +183,8 @@ function StatusBadge({ status }: { status: string }) {
     return <span className="flex items-center text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-200"><CheckCircle2 className="w-3 h-3 mr-1" /> Approved</span>;
   if (status === "PENDING")
     return <span className="flex items-center text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-200"><AlertCircle className="w-3 h-3 mr-1" /> Pending Approval</span>;
+  if (status === "REJECTED")
+    return <span className="flex items-center text-xs font-medium text-rose-600 bg-rose-50 px-2 py-1 rounded-full border border-rose-200"><AlertCircle className="w-3 h-3 mr-1" /> Rejected — Resubmit</span>;
   return <span className="flex items-center text-xs font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded-full border border-slate-200"><Lock className="w-3 h-3 mr-1" /> Draft</span>;
 }
 
@@ -148,16 +201,43 @@ function ProductLoadingTab({ status, loadedItems, onSubmitted }: ProductLoadingT
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/products")
-      .then((r) => r.json())
-      .then((data) => {
+    const loadProducts = async () => {
+      try {
+        setLoading(true);
+        const offlineCheck = typeof navigator !== "undefined" && !navigator.onLine;
+        let data: any[] = [];
+        
+        if (offlineCheck) {
+          const cached = await getCache<any[]>("products");
+          if (cached) data = cached;
+        } else {
+          try {
+            const res = await fetch("/api/products");
+            if (res.ok) {
+              data = await res.json();
+              await setCache("products", data);
+            } else {
+              const cached = await getCache<any[]>("products");
+              if (cached) data = cached;
+            }
+          } catch (err) {
+            console.warn("Fetch products failed, trying cache:", err);
+            const cached = await getCache<any[]>("products");
+            if (cached) data = cached;
+          }
+        }
+
         setProducts(data.map((p: any) => {
-          const matched = loadedItems.find((li) => li.productId === p.id);
+          const matched = loadedItems.find((li: any) => li.productId === p.id);
           return { ...p, qty: matched ? matched.qty : 0 };
         }));
+      } catch (err) {
+        console.error("Failed to load products for loading tab:", err);
+      } finally {
         setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      }
+    };
+    loadProducts();
   }, [loadedItems]);
 
   const updateQty = (id: string, qty: number) => {
@@ -174,14 +254,45 @@ function ProductLoadingTab({ status, loadedItems, onSubmitted }: ProductLoadingT
       qty: p.qty,
       value: p.price * p.qty,
     }));
-    const res = await fetch("/api/loading/product", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items }),
-    });
-    setSubmitting(false);
-    if (res.ok) onSubmitted();
-    else alert("Failed to submit. Please try again.");
+    try {
+      const res = await fetch("/api/loading/product", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+
+      if (res.ok) {
+        onSubmitted();
+        return;
+      }
+
+      const errData = await res.json().catch(() => ({}));
+
+      if (res.status === 422 && errData.error === "STALE_PRODUCT_IDS") {
+        // Local product cache is outdated (e.g., after a DB reseed).
+        // Bust the cache, re-fetch fresh data, and inform the user.
+        await deleteCache("products");
+        try {
+          const freshRes = await fetch("/api/products");
+          if (freshRes.ok) {
+            const freshData = await freshRes.json();
+            await setCache("products", freshData);
+            setProducts(freshData.map((p: any) => ({ ...p, qty: 0 })));
+          }
+        } catch {
+          // If re-fetch also fails, user will just see cleared quantities
+        }
+        alert(
+          "Your product list was outdated and has been refreshed.\n" +
+          "Please re-enter quantities and submit again."
+        );
+        return;
+      }
+
+      alert(errData.message || "Failed to submit. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const isLocked = status === "PENDING" || status === "APPROVED";
@@ -258,16 +369,43 @@ function PosmLoadingTab({ status, loadedItems, onSubmitted }: PosmLoadingTabProp
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/posms")
-      .then((r) => r.json())
-      .then((data) => {
+    const loadPosms = async () => {
+      try {
+        setLoading(true);
+        const offlineCheck = typeof navigator !== "undefined" && !navigator.onLine;
+        let data: any[] = [];
+        
+        if (offlineCheck) {
+          const cached = await getCache<any[]>("posms");
+          if (cached) data = cached;
+        } else {
+          try {
+            const res = await fetch("/api/posms");
+            if (res.ok) {
+              data = await res.json();
+              await setCache("posms", data);
+            } else {
+              const cached = await getCache<any[]>("posms");
+              if (cached) data = cached;
+            }
+          } catch (err) {
+            console.warn("Fetch posms failed, trying cache:", err);
+            const cached = await getCache<any[]>("posms");
+            if (cached) data = cached;
+          }
+        }
+
         setPosms(data.map((p: any) => {
-          const matched = loadedItems.find((li) => li.posmId === p.id);
+          const matched = loadedItems.find((li: any) => li.posmId === p.id);
           return { ...p, qty: matched ? matched.qty : 0 };
         }));
+      } catch (err) {
+        console.error("Failed to load posms for loading tab:", err);
+      } finally {
         setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      }
+    };
+    loadPosms();
   }, [loadedItems]);
 
   const updateQty = (id: string, qty: number) => {
@@ -278,14 +416,45 @@ function PosmLoadingTab({ status, loadedItems, onSubmitted }: PosmLoadingTabProp
     if (posms.every((p) => p.qty === 0)) return alert("Please enter at least one POSM quantity.");
     setSubmitting(true);
     const items = posms.filter((p) => p.qty > 0).map((p) => ({ posmId: p.id, qty: p.qty }));
-    const res = await fetch("/api/loading/posm", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items }),
-    });
-    setSubmitting(false);
-    if (res.ok) onSubmitted();
-    else alert("Failed to submit. Please try again.");
+    try {
+      const res = await fetch("/api/loading/posm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+
+      if (res.ok) {
+        onSubmitted();
+        return;
+      }
+
+      const errData = await res.json().catch(() => ({}));
+
+      if (res.status === 422 && errData.error === "STALE_POSM_IDS") {
+        // The local POSM cache is outdated (e.g., after a DB reseed).
+        // Bust the cache, re-fetch fresh data from the server, and inform the user.
+        await deleteCache("posms");
+        try {
+          const freshRes = await fetch("/api/posms");
+          if (freshRes.ok) {
+            const freshData = await freshRes.json();
+            await setCache("posms", freshData);
+            setPosms(freshData.map((p: any) => ({ ...p, qty: 0 })));
+          }
+        } catch {
+          // If re-fetch also fails, the user will just see cleared quantities
+        }
+        alert(
+          "Your POSM list was outdated and has been refreshed.\n" +
+          "Please re-enter quantities and submit again."
+        );
+        return;
+      }
+
+      alert(errData.message || "Failed to submit. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const isLocked = status === "PENDING" || status === "APPROVED";
@@ -365,6 +534,11 @@ function DailyActivityTab() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [activeTooltipId, setActiveTooltipId] = useState<string | null>(null);
   
+  // Offline Sync states
+  const [drafts, setDrafts] = useState<any[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+
   // Registration Form State
   const [showRegModal, setShowRegModal] = useState(false);
   const [regName, setRegName] = useState("");
@@ -388,7 +562,6 @@ function DailyActivityTab() {
         },
         (err) => {
           console.error("Geolocation error:", err);
-          // Fallback coordinate for demo/development (Warung Pak Bejo area)
           setUserLocation({ lat: -6.2088, lng: 106.8456 });
         },
         { enableHighAccuracy: true }
@@ -399,18 +572,50 @@ function DailyActivityTab() {
   const fetchOutletsAndStatus = async () => {
     try {
       setLoading(true);
-      const [outletsRes, statusRes] = await Promise.all([
-        fetch("/api/outlets"),
-        fetch("/api/activity/status")
-      ]);
-      if (outletsRes.ok) {
-        const data = await outletsRes.json();
-        setOutlets(data);
+      const isOfflineCheck = typeof navigator !== "undefined" && !navigator.onLine;
+
+      if (isOfflineCheck) {
+        // Fetch cached outlets and status
+        const [cachedOutlets, cachedStatus] = await Promise.all([
+          getCache<any[]>("outlets"),
+          getCache<any>("activity_status")
+        ]);
+        
+        if (cachedOutlets) setOutlets(cachedOutlets);
+        if (cachedStatus) setIsClosed(cachedStatus.isClosed || false);
+      } else {
+        try {
+          const [outletsRes, statusRes] = await Promise.all([
+            fetch("/api/outlets"),
+            fetch("/api/activity/status")
+          ]);
+
+          let outletsData = [];
+          if (outletsRes.ok) {
+            outletsData = await outletsRes.json();
+            setOutlets(outletsData);
+            await setCache("outlets", outletsData);
+          }
+
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            setIsClosed(statusData.isClosed);
+            await setCache("activity_status", statusData);
+          }
+        } catch (err) {
+          console.warn("Network fetch failed in activity page, using local cache:", err);
+          const [cachedOutlets, cachedStatus] = await Promise.all([
+            getCache<any[]>("outlets"),
+            getCache<any>("activity_status")
+          ]);
+          if (cachedOutlets) setOutlets(cachedOutlets);
+          if (cachedStatus) setIsClosed(cachedStatus.isClosed || false);
+        }
       }
-      if (statusRes.ok) {
-        const statusData = await statusRes.json();
-        setIsClosed(statusData.isClosed);
-      }
+
+      // Fetch pending offline drafts
+      const localDrafts = await getAllDrafts();
+      setDrafts(localDrafts);
     } catch (err) {
       console.error(err);
     } finally {
@@ -418,9 +623,93 @@ function DailyActivityTab() {
     }
   };
 
+  const handleSyncDrafts = async () => {
+    if (drafts.length === 0) return;
+    setSyncing(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const draft of drafts) {
+      try {
+        if (draft.stockChecks.length > 0 || draft.posmChecks.length > 0) {
+          const visitBody: any = {};
+          if (draft.stockChecks.length > 0) visitBody.stockChecks = draft.stockChecks;
+          if (draft.posmChecks.length > 0) visitBody.posmChecks = draft.posmChecks;
+
+          const visitRes = await fetch(`/api/visit/${draft.outletId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(visitBody)
+          });
+          
+          if (!visitRes.ok) {
+            throw new Error(`Failed to sync visit checks for ${draft.outletName}`);
+          }
+        }
+
+        if (draft.order) {
+          const statusRes = await fetch("/api/activity/status");
+          const statusData = await statusRes.json();
+          const actualUserId = statusData?.user?.id || "dummy-user-id";
+
+          const orderBody = {
+            userId: actualUserId,
+            outletId: draft.outletId,
+            ...draft.order
+          };
+
+          const orderRes = await fetch("/api/orders", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(orderBody)
+          });
+
+          if (!orderRes.ok) {
+            throw new Error(`Failed to sync order for ${draft.outletName}`);
+          }
+        }
+
+        await deleteDraft(draft.outletId);
+        successCount++;
+      } catch (err) {
+        console.error("Failed to sync draft:", err);
+        failCount++;
+      }
+    }
+
+    setSyncing(false);
+    if (successCount > 0 && failCount === 0) {
+      alert(`Successfully synced all ${successCount} visits/orders!`);
+    } else if (successCount > 0 && failCount > 0) {
+      alert(`Synced ${successCount} visits/orders successfully, but ${failCount} failed.`);
+    } else {
+      alert("Failed to sync drafts. Please verify your internet connection.");
+    }
+    
+    fetchOutletsAndStatus();
+  };
+
   useEffect(() => {
     fetchOutletsAndStatus();
     getGeoLocation();
+
+    if (typeof window !== "undefined") {
+      setIsOffline(!navigator.onLine);
+      const goOnline = () => {
+        setIsOffline(false);
+        fetchOutletsAndStatus();
+      };
+      const goOffline = () => {
+        setIsOffline(true);
+        fetchOutletsAndStatus();
+      };
+      window.addEventListener("online", goOnline);
+      window.addEventListener("offline", goOffline);
+      return () => {
+        window.removeEventListener("online", goOnline);
+        window.removeEventListener("offline", goOffline);
+      };
+    }
   }, []);
 
   // Haversine Distance helper (meters)
@@ -460,6 +749,13 @@ function DailyActivityTab() {
     // Sort again
     listCopy.sort((a, b) => a.routeSeq - b.routeSeq);
     setOutlets(listCopy);
+
+    // Cache the updated outlets list locally in IndexedDB
+    try {
+      await setCache("outlets", listCopy);
+    } catch (err) {
+      console.error("Failed to cache route sequence change:", err);
+    }
 
     // Save to database (send sequence swaps)
     try {
@@ -609,6 +905,41 @@ function DailyActivityTab() {
 
   return (
     <div className="space-y-6">
+      {/* Offline Sync Panel */}
+      {drafts.length > 0 && (
+        <Card className="border-amber-200 bg-amber-50/70 shadow-sm rounded-2xl overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="h-10 w-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600">
+                <WifiOff className="h-5 w-5 animate-pulse" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-amber-900">{drafts.length} Offline Draft{drafts.length > 1 ? "s" : ""} Awaiting Sync</h4>
+                <p className="text-[11px] text-amber-700">Stock checks and orders saved offline.</p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              disabled={syncing || isOffline}
+              onClick={handleSyncDrafts}
+              className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg px-3 py-2 flex items-center gap-1.5 shadow"
+            >
+              {syncing ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Syncing...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Sync Now
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Route selector dropdown */}
       <div className="flex flex-col space-y-1 bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm">
         <label className="text-xs font-bold text-slate-500">Active Route Group</label>
@@ -730,9 +1061,12 @@ function DailyActivityTab() {
               // Calculate distance to current outlet if location exists
               let distance = -1;
               let isWithinRadius = false;
+              const bypassGeofence = process.env.NEXT_PUBLIC_BYPASS_GEOFENCE === "true";
               if (userLocation && outlet.latitude && outlet.longitude) {
                 distance = getDistanceInMeters(userLocation.lat, userLocation.lng, outlet.latitude, outlet.longitude);
-                isWithinRadius = distance <= 50;
+                isWithinRadius = distance <= 50 || bypassGeofence;
+              } else if (bypassGeofence) {
+                isWithinRadius = true;
               }
 
               return (

@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
 // User role (SALESMAN or ADMIN)
@@ -287,16 +287,19 @@ model Bill {
 }
 
 model PaymentSettlement {
-  id          String         @id @default(cuid())
-  amount      Float
-  status      String         @default("PENDING")
-  
-  userId      String
-  user        User           @relation(fields: [userId], references: [id])
-  
-  billId      String
-  bill        Bill           @relation(fields: [billId], references: [id])
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(cuid())
+  amount         Float
+  status         String   @default("PENDING")
+  // true  = salesman submitted collection only (no order items) → admin must pick an order bill
+  // false = salesman bundled collection with a new order       → auto-linked to that order's bill
+  collectionOnly Boolean  @default(false)
+
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+
+  billId         String
+  bill           Bill     @relation(fields: [billId], references: [id])
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }

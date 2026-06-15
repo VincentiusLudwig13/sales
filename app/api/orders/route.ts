@@ -98,50 +98,28 @@ export async function POST(req: Request) {
         });
       }
 
-      // 4. Deduct outstanding bills based on collection and return deduction
-      // We process older outstanding bills first (FIFO)
-      let remainingDeduction = validatedData.collectionAmount + validatedData.returnDeduction;
-
-      if (remainingDeduction > 0) {
-        const outstandingBills = await tx.bill.findMany({
+      // 4. If the salesman collected cash, create a PENDING settlement for admin review.
+      //    Bills are NOT touched here — outstanding/settled only update when admin approves.
+      if (validatedData.collectionAmount > 0) {
+        // Link to the oldest unsettled bill of this outlet (admin can re-assign later)
+        const oldestBill = await tx.bill.findFirst({
           where: {
             outletId: validatedData.outletId,
-            outstanding: { gt: 0 }
+            outstanding: { gt: 0 },
           },
-          orderBy: { date: "asc" } // Pay oldest first
+          orderBy: { date: "asc" },
         });
 
-        for (const bill of outstandingBills) {
-          if (remainingDeduction <= 0) break;
-
-          const amountToDeduct = Math.min(bill.outstanding, remainingDeduction);
-          const newOutstanding = bill.outstanding - amountToDeduct;
-          const newSettled = bill.settled + amountToDeduct;
-
-          // Record payment settlement for audit trail if it is part of collectionAmount
-          // If we also track returnDeduction, we can record it as a approved settlement
-          if (validatedData.collectionAmount > 0) {
-            // Calculate how much of this deduction is from collection vs return
-            // For simplicity, we create a PaymentSettlement marked as APPROVED directly
-            await tx.paymentSettlement.create({
-              data: {
-                amount: amountToDeduct,
-                status: "APPROVED", // Auto-approved because it's recorded directly at order submission
-                userId: sessionUserId,
-                billId: bill.id
-              }
-            });
-          }
-
-          await tx.bill.update({
-            where: { id: bill.id },
+        if (oldestBill) {
+          await tx.paymentSettlement.create({
             data: {
-              outstanding: newOutstanding,
-              settled: newSettled,
-            }
+              amount: validatedData.collectionAmount,
+              status: "PENDING",
+              collectionOnly: validatedData.items.length === 0, // no order items → pure collection
+              userId: sessionUserId,
+              billId: oldestBill.id,
+            },
           });
-
-          remainingDeduction -= amountToDeduct;
         }
       }
 

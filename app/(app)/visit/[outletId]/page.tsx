@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Box, ShoppingCart, Tag, Camera, CheckCircle2, Loader2, AlertCircle, Trash2 } from "lucide-react";
+import { ArrowLeft, Box, ShoppingCart, Tag, Camera, CheckCircle2, Loader2, AlertCircle, Trash2, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getCache, setCache, getDraft, saveDraft, deleteDraft } from "@/lib/offline-db";
 
 interface Product {
   id: string;
@@ -68,10 +69,25 @@ export default function StoreVisitPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [posms, setPosms] = useState<Posm[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
   
   // Keep track of previously saved stock checks & posm checks
   const [savedStocks, setSavedStocks] = useState<Record<string, { qty: number }>>({});
   const [savedPosms, setSavedPosms] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsOffline(!navigator.onLine);
+      const goOnline = () => setIsOffline(false);
+      const goOffline = () => setIsOffline(true);
+      window.addEventListener("online", goOnline);
+      window.addEventListener("offline", goOffline);
+      return () => {
+        window.removeEventListener("online", goOnline);
+        window.removeEventListener("offline", goOffline);
+      };
+    }
+  }, []);
 
   const tabs = [
     { id: "stock", label: "Stock", icon: Box },
@@ -82,44 +98,105 @@ export default function StoreVisitPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [outletRes, productsRes, posmsRes, visitRes] = await Promise.all([
-        fetch(`/api/outlets/${outletId}`),
-        fetch("/api/products"),
-        fetch("/api/posms"),
-        fetch(`/api/visit/${outletId}`)
-      ]);
+      
+      let oData: Outlet | null = null;
+      let pData: Product[] = [];
+      let poData: Posm[] = [];
+      let vData: any = null;
+      
+      const offlineCheck = typeof navigator !== "undefined" && !navigator.onLine;
 
-      if (outletRes.ok) {
-        const oData = await outletRes.json();
-        setOutlet(oData);
-      }
-      if (productsRes.ok) {
-        const pData = await productsRes.json();
-        setProducts(pData);
-      }
-      if (posmsRes.ok) {
-        const poData = await posmsRes.json();
-        setPosms(poData);
-      }
-      if (visitRes.ok) {
-        const vData = await visitRes.json();
-        if (vData) {
-          // Process stockChecks
-          const stockMap: Record<string, { qty: number }> = {};
-          (vData.stockChecks ?? []).forEach((sc: any) => {
-            stockMap[sc.productId] = {
-              qty: sc.qty
-            };
-          });
-          setSavedStocks(stockMap);
-
-          // Process posmChecks
-          const posmMap: Record<string, number> = {};
-          (vData.posmChecks ?? []).forEach((pc: any) => {
-            posmMap[pc.posmId] = pc.qty;
-          });
-          setSavedPosms(posmMap);
+      if (offlineCheck) {
+        // Load from Cache
+        const [cachedOutlets, cachedProducts, cachedPosms] = await Promise.all([
+          getCache<any[]>("outlets"),
+          getCache<any[]>("products"),
+          getCache<any[]>("posms")
+        ]);
+        
+        if (cachedOutlets) {
+          oData = cachedOutlets.find((o: any) => o.id === outletId) || null;
         }
+        pData = cachedProducts || [];
+        poData = cachedPosms || [];
+        
+        // Grab existing local draft
+        const localDraft = await getDraft(outletId);
+        if (localDraft) {
+          vData = {
+            stockChecks: localDraft.stockChecks,
+            posmChecks: localDraft.posmChecks
+          };
+        }
+      } else {
+        // Try fetching online
+        try {
+          const [outletRes, productsRes, posmsRes, visitRes] = await Promise.all([
+            fetch(`/api/outlets/${outletId}`),
+            fetch("/api/products"),
+            fetch("/api/posms"),
+            fetch(`/api/visit/${outletId}`)
+          ]);
+
+          if (outletRes.ok) oData = await outletRes.json();
+          if (productsRes.ok) pData = await productsRes.json();
+          if (posmsRes.ok) poData = await posmsRes.json();
+          if (visitRes.ok) vData = await visitRes.json();
+
+          // Write updates to cache
+          if (pData.length > 0) await setCache("products", pData);
+          if (poData.length > 0) await setCache("posms", poData);
+          
+          if (oData) {
+            const cachedOutlets = await getCache<any[]>("outlets") || [];
+            const updatedOutlets = cachedOutlets.map((o: any) => o.id === oData!.id ? { ...o, ...oData } : o);
+            if (!updatedOutlets.some((o: any) => o.id === oData!.id)) {
+              updatedOutlets.push(oData);
+            }
+            await setCache("outlets", updatedOutlets);
+          }
+        } catch (err) {
+          console.warn("Fetch failed, falling back to cache:", err);
+          const [cachedOutlets, cachedProducts, cachedPosms] = await Promise.all([
+            getCache<any[]>("outlets"),
+            getCache<any[]>("products"),
+            getCache<any[]>("posms")
+          ]);
+          
+          if (cachedOutlets) {
+            oData = cachedOutlets.find((o: any) => o.id === outletId) || null;
+          }
+          pData = cachedProducts || [];
+          poData = cachedPosms || [];
+          
+          const localDraft = await getDraft(outletId);
+          if (localDraft) {
+            vData = {
+              stockChecks: localDraft.stockChecks,
+              posmChecks: localDraft.posmChecks
+            };
+          }
+        }
+      }
+
+      if (oData) setOutlet(oData);
+      if (pData.length > 0) setProducts(pData);
+      if (poData.length > 0) setPosms(poData);
+      
+      if (vData) {
+        // Process stockChecks
+        const stockMap: Record<string, { qty: number }> = {};
+        (vData.stockChecks ?? []).forEach((sc: any) => {
+          stockMap[sc.productId] = { qty: sc.qty };
+        });
+        setSavedStocks(stockMap);
+
+        // Process posmChecks
+        const posmMap: Record<string, number> = {};
+        (vData.posmChecks ?? []).forEach((pc: any) => {
+          posmMap[pc.posmId] = pc.qty;
+        });
+        setSavedPosms(posmMap);
       }
     } catch (err) {
       console.error("Error loading visit page data:", err);
@@ -160,19 +237,26 @@ export default function StoreVisitPage() {
     <div className="flex flex-col min-h-screen bg-slate-50 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Header */}
       <div className="bg-blue-600 text-white px-4 pt-12 pb-6 shadow-md relative z-10">
-        <div className="flex items-center mb-4">
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="text-white hover:bg-blue-500 hover:text-white mr-2 -ml-2"
-            onClick={() => router.back()}
-          >
-            <ArrowLeft className="h-6 w-6" />
-          </Button>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">{outlet.name}</h1>
-            <p className="text-blue-200 text-sm">PIC: {outlet.picName} ({outlet.picPhone})</p>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center">
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="text-white hover:bg-blue-500 hover:text-white mr-2 -ml-2"
+              onClick={() => router.back()}
+            >
+              <ArrowLeft className="h-6 w-6" />
+            </Button>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight">{outlet.name}</h1>
+              <p className="text-blue-200 text-sm">PIC: {outlet.picName} ({outlet.picPhone})</p>
+            </div>
           </div>
+          {isOffline && (
+            <span className="flex items-center gap-1 bg-amber-500 text-white text-[10px] font-bold px-2 py-1 rounded-full animate-pulse border border-amber-400 shadow">
+              <WifiOff className="w-3 h-3" /> Offline Draft
+            </span>
+          )}
         </div>
 
         {/* Action Tabs */}
@@ -196,9 +280,9 @@ export default function StoreVisitPage() {
 
       {/* Content */}
       <div className="flex-1 p-4 pb-24">
-        {activeTab === "stock" && <CheckStockTab products={products} outletId={outletId} initialStocks={savedStocks} onSave={fetchData} />}
-        {activeTab === "posm" && <CheckPosmTab posms={posms} outletId={outletId} initialPosms={savedPosms} onSave={fetchData} />}
-        {activeTab === "order" && <OrderTab products={products} outlet={outlet} refreshOutlet={fetchData} />}
+        {activeTab === "stock" && <CheckStockTab products={products} outlet={outlet} initialStocks={savedStocks} onSave={fetchData} />}
+        {activeTab === "posm" && <CheckPosmTab posms={posms} outlet={outlet} initialPosms={savedPosms} onSave={fetchData} />}
+        {activeTab === "order" && <OrderTab products={products} outlet={outlet} refreshOutlet={fetchData} isOffline={isOffline} />}
       </div>
     </div>
   );
@@ -208,12 +292,12 @@ export default function StoreVisitPage() {
 
 interface CheckStockTabProps {
   products: Product[];
-  outletId: string;
+  outlet: Outlet;
   initialStocks: Record<string, { qty: number }>;
   onSave: () => void;
 }
 
-function CheckStockTab({ products, outletId, initialStocks, onSave }: CheckStockTabProps) {
+function CheckStockTab({ products, outlet, initialStocks, onSave }: CheckStockTabProps) {
   const [stocks, setStocks] = useState<Record<string, { qty: number }>>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -234,15 +318,40 @@ function CheckStockTab({ products, outletId, initialStocks, onSave }: CheckStock
 
   const handleSave = async () => {
     setSubmitting(true);
-    try {
-      const stockChecks = Object.entries(stocks)
-        .filter(([_, data]) => data.qty > 0)
-        .map(([productId, data]) => ({
-          productId,
-          qty: data.qty
-        }));
+    const stockChecks = Object.entries(stocks)
+      .filter(([_, data]) => data.qty > 0)
+      .map(([productId, data]) => ({
+        productId,
+        qty: data.qty
+      }));
 
-      const res = await fetch(`/api/visit/${outletId}`, {
+    const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+    if (isOffline) {
+      try {
+        const currentDraft = await getDraft(outlet.id) || {
+          outletId: outlet.id,
+          outletName: outlet.name,
+          date: new Date().toISOString(),
+          stockChecks: [],
+          posmChecks: [],
+          order: null,
+          status: "DRAFT"
+        };
+        currentDraft.stockChecks = stockChecks;
+        await saveDraft(currentDraft);
+        alert("Stock data saved locally (Offline draft)!");
+        onSave();
+      } catch (err) {
+        console.error("Local save failed:", err);
+        alert("Failed to save draft locally.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/visit/${outlet.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ stockChecks })
@@ -256,7 +365,22 @@ function CheckStockTab({ products, outletId, initialStocks, onSave }: CheckStock
       }
     } catch (err) {
       console.error(err);
-      alert("An error occurred while saving stock data.");
+      const saveLocal = confirm("Network request failed. Would you like to save this stock check as a local offline draft?");
+      if (saveLocal) {
+        const currentDraft = await getDraft(outlet.id) || {
+          outletId: outlet.id,
+          outletName: outlet.name,
+          date: new Date().toISOString(),
+          stockChecks: [],
+          posmChecks: [],
+          order: null,
+          status: "DRAFT"
+        };
+        currentDraft.stockChecks = stockChecks;
+        await saveDraft(currentDraft);
+        alert("Stock data saved locally (Offline draft)!");
+        onSave();
+      }
     } finally {
       setSubmitting(false);
     }
@@ -313,12 +437,12 @@ function CheckStockTab({ products, outletId, initialStocks, onSave }: CheckStock
 
 interface CheckPosmTabProps {
   posms: Posm[];
-  outletId: string;
+  outlet: Outlet;
   initialPosms: Record<string, number>;
   onSave: () => void;
 }
 
-function CheckPosmTab({ posms, outletId, initialPosms, onSave }: CheckPosmTabProps) {
+function CheckPosmTab({ posms, outlet, initialPosms, onSave }: CheckPosmTabProps) {
   const [posmQtys, setPosmQtys] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -339,15 +463,40 @@ function CheckPosmTab({ posms, outletId, initialPosms, onSave }: CheckPosmTabPro
 
   const handleSave = async () => {
     setSubmitting(true);
-    try {
-      const posmChecks = Object.entries(posmQtys)
-        .filter(([_, qty]) => qty > 0)
-        .map(([posmId, qty]) => ({
-          posmId,
-          qty
-        }));
+    const posmChecks = Object.entries(posmQtys)
+      .filter(([_, qty]) => qty > 0)
+      .map(([posmId, qty]) => ({
+        posmId,
+        qty
+      }));
 
-      const res = await fetch(`/api/visit/${outletId}`, {
+    const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+    if (isOffline) {
+      try {
+        const currentDraft = await getDraft(outlet.id) || {
+          outletId: outlet.id,
+          outletName: outlet.name,
+          date: new Date().toISOString(),
+          stockChecks: [],
+          posmChecks: [],
+          order: null,
+          status: "DRAFT"
+        };
+        currentDraft.posmChecks = posmChecks;
+        await saveDraft(currentDraft);
+        alert("POSM data saved locally (Offline draft)!");
+        onSave();
+      } catch (err) {
+        console.error("Local save failed:", err);
+        alert("Failed to save draft locally.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/visit/${outlet.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ posmChecks })
@@ -361,7 +510,22 @@ function CheckPosmTab({ posms, outletId, initialPosms, onSave }: CheckPosmTabPro
       }
     } catch (err) {
       console.error(err);
-      alert("An error occurred while saving POSM data.");
+      const saveLocal = confirm("Network request failed. Would you like to save this POSM check as a local offline draft?");
+      if (saveLocal) {
+        const currentDraft = await getDraft(outlet.id) || {
+          outletId: outlet.id,
+          outletName: outlet.name,
+          date: new Date().toISOString(),
+          stockChecks: [],
+          posmChecks: [],
+          order: null,
+          status: "DRAFT"
+        };
+        currentDraft.posmChecks = posmChecks;
+        await saveDraft(currentDraft);
+        alert("POSM data saved locally (Offline draft)!");
+        onSave();
+      }
     } finally {
       setSubmitting(false);
     }
@@ -412,6 +576,7 @@ interface OrderTabProps {
   products: Product[];
   outlet: Outlet;
   refreshOutlet: () => Promise<void>;
+  isOffline: boolean;
 }
 
 interface SelectedItem {
@@ -420,12 +585,11 @@ interface SelectedItem {
   discount: number;
 }
 
-function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
+function OrderTab({ products, outlet, refreshOutlet, isOffline }: OrderTabProps) {
   const router = useRouter();
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
   const [topTerm, setTopTerm] = useState(outlet.topTerm || "COD");
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
-  const [settlingBill, setSettlingBill] = useState<string | null>(null);
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [expandedBillId, setExpandedBillId] = useState<string | null>(null);
 
@@ -474,38 +638,6 @@ function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
   const totalDiscount = calculatedItems.reduce((sum, i) => sum + i.discount, 0);
   const totalNett = calculatedItems.reduce((sum, i) => sum + i.nettSales, 0);
 
-  // Settle Bill helper
-  const handleSettle = async (bill: Bill) => {
-    setSettlingBill(bill.id);
-    try {
-      // Fetch user status info to get the active authenticated user's ID
-      const statusRes = await fetch("/api/activity/status");
-      const statusData = await statusRes.json();
-      const actualUserId = statusData?.user?.id || "dummy-user-id";
-      
-      const res = await fetch(`/api/bills/${bill.id}/settle`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: bill.outstanding,
-          userId: actualUserId
-        })
-      });
-
-      if (res.ok) {
-        alert("Payment settlement requested! Pending Admin approval.");
-        await refreshOutlet();
-      } else {
-        const errorData = await res.json();
-        alert(`Settlement request failed: ${errorData.error || "Unknown error"}`);
-      }
-    } catch (err) {
-      console.error(err);
-      alert("Error occurred while settling payment.");
-    } finally {
-      setSettlingBill(null);
-    }
-  };
 
   // Capture Photo using native HTML5 camera
   const handleCapturePhoto = () => {
@@ -530,6 +662,33 @@ function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
   // Return states
   const [returnItems, setReturnItems] = useState<{ productId: string; qty: number; value: number }[]>([]);
   const [collectionInput, setCollectionInput] = useState<string>("0");
+
+  useEffect(() => {
+    const loadOrderDraft = async () => {
+      try {
+        const draft = await getDraft(outlet.id);
+        if (draft && draft.order) {
+          const loadedItems = draft.order.items.map((item) => ({
+            productId: item.productId,
+            qty: item.qty,
+            discount: item.discount,
+          }));
+          setSelectedItems(loadedItems);
+          setTopTerm(draft.order.topTerm);
+          setPhotoUrl(draft.order.photoUrl);
+          if (draft.order.returns) {
+            setReturnItems(draft.order.returns);
+          }
+          if (draft.order.collectionAmount !== undefined) {
+            setCollectionInput(String(draft.order.collectionAmount));
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load draft order:", err);
+      }
+    };
+    loadOrderDraft();
+  }, [outlet.id]);
 
   const handleAddReturnItem = () => {
     setReturnItems((prev) => [
@@ -588,6 +747,59 @@ function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
     }
 
     setSubmittingOrder(true);
+
+    const orderData = {
+      items: calculatedItems.map((ci) => ({
+        productId: ci.productId,
+        qty: ci.qty,
+        grossSales: ci.grossSales,
+        discount: ci.discount,
+        nettSales: ci.nettSales
+      })),
+      returns: returnItems.map((ri) => ({
+        productId: ri.productId,
+        qty: ri.qty,
+        value: ri.value
+      })),
+      collectionAmount: totalCollection,
+      returnDeduction: totalReturnDeduction,
+      grossSales: totalGross,
+      discount: totalDiscount,
+      nettSales: totalNett,
+      topTerm,
+      photoUrl
+    };
+
+    const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+
+    const saveLocalDraft = async () => {
+      try {
+        const currentDraft = await getDraft(outlet.id) || {
+          outletId: outlet.id,
+          outletName: outlet.name,
+          date: new Date().toISOString(),
+          stockChecks: [],
+          posmChecks: [],
+          order: null,
+          status: "DRAFT"
+        };
+        currentDraft.order = orderData;
+        currentDraft.status = "DRAFT";
+        await saveDraft(currentDraft);
+        alert("Order saved locally as draft (Offline mode)!");
+        router.push("/activity");
+      } catch (err) {
+        console.error("Local save failed:", err);
+        alert("Failed to save draft locally.");
+      }
+    };
+
+    if (isOffline) {
+      await saveLocalDraft();
+      setSubmittingOrder(false);
+      return;
+    }
+
     try {
       // Retrieve session/user state
       const statusRes = await fetch("/api/activity/status");
@@ -597,25 +809,7 @@ function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
       const orderBody = {
         userId: actualUserId,
         outletId: outlet.id,
-        grossSales: totalGross,
-        discount: totalDiscount,
-        nettSales: totalNett,
-        topTerm,
-        photoUrl,
-        collectionAmount: totalCollection,
-        returnDeduction: totalReturnDeduction,
-        items: calculatedItems.map((ci) => ({
-          productId: ci.productId,
-          qty: ci.qty,
-          grossSales: ci.grossSales,
-          discount: ci.discount,
-          nettSales: ci.nettSales
-        })),
-        returns: returnItems.map((ri) => ({
-          productId: ri.productId,
-          qty: ri.qty,
-          value: ri.value
-        }))
+        ...orderData
       };
 
       const res = await fetch("/api/orders", {
@@ -625,15 +819,23 @@ function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
       });
 
       if (res.ok) {
+        await deleteDraft(outlet.id);
         alert("Order submitted successfully!");
         router.push("/activity");
       } else {
         const err = await res.json();
-        alert(`Failed to submit order: ${JSON.stringify(err)}`);
+        console.error("Submit order error response:", err);
+        const saveLocal = confirm("Server error while submitting order. Would you like to save this order as a local offline draft instead?");
+        if (saveLocal) {
+          await saveLocalDraft();
+        }
       }
     } catch (err) {
       console.error(err);
-      alert("Error submitting order.");
+      const saveLocal = confirm("Network request failed. Would you like to save this order as a local offline draft instead?");
+      if (saveLocal) {
+        await saveLocalDraft();
+      }
     } finally {
       setSubmittingOrder(false);
     }
@@ -666,18 +868,7 @@ function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
                     </span>
                     <span className="text-xs text-slate-400">{new Date(bill.date).toLocaleDateString("id-ID")}</span>
                   </div>
-                  <div className="flex items-center space-x-3">
-                    <span className="font-semibold text-rose-600">Rp {bill.outstanding.toLocaleString("id-ID")}</span>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      disabled={settlingBill === bill.id}
-                      onClick={() => handleSettle(bill)}
-                      className="h-8 border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
-                    >
-                      {settlingBill === bill.id ? "Settling..." : "Settle"}
-                    </Button>
-                  </div>
+                  <span className="font-semibold text-rose-600">Rp {bill.outstanding.toLocaleString("id-ID")}</span>
                 </div>
 
                 {expandedBillId === bill.id && bill.order?.items && (
@@ -858,7 +1049,7 @@ function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
                  onChange={(e) => setCollectionInput(e.target.value)}
                  className="h-10 bg-slate-50 border-slate-200 font-semibold text-blue-600 focus:ring-blue-500" 
                />
-               <span className="text-[10px] text-slate-400 italic block mt-1">Deduct outstanding bills with collection amount.</span>
+               <span className="text-[10px] text-slate-400 italic block mt-1">Collection amount is sent to admin automatically when you submit the order.</span>
              </div>
            </div>
 
@@ -899,13 +1090,13 @@ function OrderTab({ products, outlet, refreshOutlet }: OrderTabProps) {
                )}
                {totalCollection > 0 && (
                  <div className="flex justify-between items-center font-semibold text-blue-600 text-xs">
-                   <span>Collection Deduction:</span>
+                    <span>Collection (Pending Admin Approval):</span>
                    <span>- Rp {totalCollection.toLocaleString("id-ID")}</span>
                  </div>
                )}
                {(totalReturnDeduction > 0 || totalCollection > 0) && (
-                 <div className="flex justify-between items-center font-bold text-emerald-600 border-t border-dashed border-slate-200 pt-2 text-sm">
-                   <span>New Outstanding Balance:</span>
+                 <div className="flex justify-between items-center font-bold text-amber-600 border-t border-dashed border-slate-200 pt-2 text-sm">
+                   <span>Projected Outstanding (after approval):</span>
                    <span>Rp {Math.max(0, outstandingTotal + totalNett - totalReturnDeduction - totalCollection).toLocaleString("id-ID")}</span>
                  </div>
                )}
